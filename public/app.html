@@ -142,6 +142,42 @@ const FM = "'Geist Mono', ui-monospace, monospace";
 const FS = "'Instrument Serif', Georgia, serif";
 
 /* ════════════════════════════════════════════════════════════════════════════
+   WRITING STYLE + OUTPUT SANITIZER
+   STYLE is appended to every copy-writing prompt. cleanCopy/deepClean are the
+   backstop: even if the model slips, no em/en dash or emoji reaches what we
+   show or save. Belt and suspenders.
+   ════════════════════════════════════════════════════════════════════════════ */
+const STYLE = `WRITING RULES (hard constraints, follow exactly):
+- Never use an em-dash (—) or en-dash (–). For a pause, use a period or a comma, or rewrite the sentence. Plain hyphens in compounds like "30-day" are fine.
+- Never use emoji or emoticons of any kind.
+- Write like a real social media manager who runs this account, not like a brand and not like an AI. Specific, plain, confident.
+- Do not use these AI-tell phrasings: "it's not just X, it's Y", "in today's world", "dive in", "delve", "unlock", "elevate", "supercharge", "level up", "game-changer", "the result?", "look no further", "say goodbye to".
+- Vary sentence length. Use contractions. Cut throat-clearing and filler. Lead with the point.
+- Match how top accounts in this niche actually post, not generic marketing copy.`;
+
+function cleanCopy(s) {
+  if (typeof s !== 'string') return s;
+  return s
+    .replace(/\s*[—–]\s*/g, ', ')                 // em/en dash -> comma (rarely fires if prompt holds)
+    .replace(/\p{Emoji_Presentation}/gu, '')        // colored emoji
+    .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '')         // flag pairs
+    .replace(/[\u200D\uFE0F\u20E3]/gu, '')          // ZWJ, variation selector, keycap
+    .replace(/[ \t]{2,}/g, ' ')                     // collapse leftover spaces
+    .replace(/\s+([,.!?])/g, '$1')                  // tidy space-before-punctuation
+    .trim();
+}
+function deepClean(obj) {
+  if (typeof obj === 'string') return cleanCopy(obj);
+  if (Array.isArray(obj)) return obj.map(deepClean);
+  if (obj && typeof obj === 'object') {
+    const out = {};
+    for (const k of Object.keys(obj)) out[k] = deepClean(obj[k]);
+    return out;
+  }
+  return obj;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
    FORMAT TAXONOMY  — re-tinted for the Cadence palette
    (kept as information, not decoration — taxonomy preserved)
    ════════════════════════════════════════════════════════════════════════════ */
@@ -309,15 +345,15 @@ function mapEngineTrend(t, i) {
     platform: plat,
     heat: m.heat,
     // "Why it's trending" — the AI-written angle (clearly the creative layer)
-    hook: t.generated?.angle || '',
+    hook: cleanCopy(t.generated?.angle || ''),
     // measured engagement (real) — formatted to a percentage, else em-dash
     engagementRate: erReal ? (m.engagementRate * 100).toFixed(1) + '%' : '—',
     engagementRateReal: erReal,          // real -> hide the "est." tag
     // REAL momentum vs baseline (measured), not a model guess
     delta: (m.deltaPct >= 0 ? '+' : '') + Math.round(m.deltaPct || 0) + '%',
-    contentAngles: t.generated?.angle ? [t.generated.angle] : [],
-    captionHook: t.generated?.captionHook || '',
-    hashtags: t.generated?.hashtags || [],
+    contentAngles: t.generated?.angle ? [cleanCopy(t.generated.angle)] : [],
+    captionHook: cleanCopy(t.generated?.captionHook || ''),
+    hashtags: (t.generated?.hashtags || []).map(cleanCopy),
     // these stay model/heuristic estimates — left blank so they read "—" / "est."
     competition: '—',
     searchVolume: '—',
@@ -1141,8 +1177,10 @@ CTA — one clear call to action
 HASHTAGS — 10-15 tags
 POSTING NOTES — ${tr.bestTimeToPost||'best time'}, visual direction
 
-Human, authentic, platform-native voice.`);
-      setGenOut(text);
+Human, authentic, platform-native voice.
+
+${STYLE}`);
+      setGenOut(cleanCopy(text));
     } catch (e) { setGenOut('Error: ' + e.message); }
     setGenLoading(false);
   };
@@ -1423,16 +1461,22 @@ function StudioTab({ T, prefillTrend, clearPrefill }) {
     const prompt = isReel
       ? `Expert short-form video director. Create a complete production plan for a ${platform} Reel/TikTok.
 TOPIC: ${topic} | AUDIENCE: ${audience||'General'} | TONE: ${tone} | GOAL: ${goal} | DURATION: ${duration} | MUSIC: ${music}
+
+${STYLE}
+
 Return ONLY valid JSON: {"title":"Punchy title","logline":"One sentence concept","hook":"First 3 seconds word for word","shots":[{"timecode":"0:00-0:03","type":"Hook","visual":"Exactly what camera shows","audio":"Word for word script","direction":"Director note"}],"broll":["B-roll 1","B-roll 2","B-roll 3"],"music":{"recommendation":"Specific song or style","reasoning":"Why this works","alternatives":["Alt 1","Alt 2"],"searchTerms":["TikTok search term"]},"caption":{"hook":"First caption line","body":"Main caption","cta":"Call to action","hashtags":["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8"]},"editingNotes":"Key editing instructions","postingTip":"One specific tip"}
 Generate 6-10 shots. Be extremely specific.`
       : `Expert Instagram carousel strategist. Create a complete slide-by-slide plan.
 TOPIC: ${topic} | AUDIENCE: ${audience||'General'} | TONE: ${tone} | GOAL: ${goal}
+
+${STYLE}
+
 Return ONLY valid JSON: {"title":"Carousel title","hook":"Why this gets saves","swipeHook":"What keeps people swiping","slideCount":8,"slides":[{"number":1,"role":"Cover / Hook","headline":"Exact headline","subtext":"Supporting copy","visual":"Image direction","designNote":"Layout tip","purpose":"Why this slide exists"}],"coverStrategy":"Slide 1 stop-scroll","saveSlide":{"number":5,"reason":"Why people save this"},"caption":{"hook":"First line","body":"Main caption","cta":"CTA for saves","hashtags":["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8"]},"colorPalette":"2-3 colors with reasoning","fontStyle":"Typography direction","postingTip":"One specific tip"}
 Generate 7-9 slides.`;
     try {
       const text = await claudeCall(prompt);
       const m = text.match(/\{[\s\S]*\}/);
-      setResult({ format, data: JSON.parse(m ? m[0] : text) });
+      setResult({ format, data: deepClean(JSON.parse(m ? m[0] : text)) });
       setOpenSec(isReel ? 'shots' : 'slides');
     } catch (e) { alert('Generation failed: ' + e.message); }
     setLoading(false);
@@ -1593,9 +1637,12 @@ function CalendarTab({ T, niche, platforms }) {
     setLoading(true);
     try {
       const text = await claudeCall(`Generate a 7-day social media content calendar for niche: ${niche}. Platforms: ${platforms.join(', ')}.
+
+${STYLE}
+
 Return ONLY a JSON array: [{"day":"Monday","date":"2026-05-25","platform":"TikTok","format":"Short video","title":"Specific post topic"},...]`);
       const m = text.match(/\[[\s\S]*\]/);
-      const newItems = JSON.parse(m ? m[0] : text);
+      const newItems = deepClean(JSON.parse(m ? m[0] : text));
       const updated = [...items, ...newItems.map((item,i) => ({ id:`auto_${Date.now()}_${i}`, title: item.title, platform: item.platform, date: item.date, format: item.format, content:'', addedAt: new Date().toISOString() }))];
       store.set('cp_calendar', updated); setItems(updated);
     } catch (e) { alert('Failed: ' + e.message); }

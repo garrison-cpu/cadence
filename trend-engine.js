@@ -88,6 +88,45 @@ const CONFIG = {
 
 
 /* =====================================================================
+   1b. WRITING STYLE + OUTPUT SANITIZER
+   ---------------------------------------------------------------------
+   STYLE is appended to every copy-writing prompt so the creative layer
+   reads like a human social manager wrote it. cleanCopy/deepClean are the
+   backstop: even if the model slips, no em/en dash or emoji survives into
+   anything we return, show, or save (Ideas / Calendar included).
+   ===================================================================== */
+const STYLE = `WRITING RULES (hard constraints, follow exactly):
+- Never use an em-dash (—) or en-dash (–). For a pause, use a period or a comma, or rewrite the sentence. Plain hyphens in compounds like "30-day" are fine.
+- Never use emoji or emoticons of any kind.
+- Write like a real social media manager who runs this account, not like a brand and not like an AI. Specific, plain, confident.
+- Do not use these AI-tell phrasings: "it's not just X, it's Y", "in today's world", "dive in", "delve", "unlock", "elevate", "supercharge", "level up", "game-changer", "the result?", "look no further", "say goodbye to".
+- Vary sentence length. Use contractions. Cut throat-clearing and filler. Lead with the point.
+- Match how top accounts in this niche actually post, not generic marketing copy.`;
+
+function cleanCopy(s) {
+  if (typeof s !== 'string') return s;
+  return s
+    .replace(/\s*[—–]\s*/g, ', ')                 // em/en dash -> comma (rarely fires if prompt holds)
+    .replace(/\p{Emoji_Presentation}/gu, '')        // colored emoji
+    .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '')         // flag pairs
+    .replace(/[\u200D\uFE0F\u20E3]/gu, '')          // ZWJ, variation selector, keycap
+    .replace(/[ \t]{2,}/g, ' ')                     // collapse leftover spaces
+    .replace(/\s+([,.!?])/g, '$1')                  // tidy space-before-punctuation
+    .trim();
+}
+function deepClean(obj) {
+  if (typeof obj === 'string') return cleanCopy(obj);
+  if (Array.isArray(obj)) return obj.map(deepClean);
+  if (obj && typeof obj === 'object') {
+    const out = {};
+    for (const k of Object.keys(obj)) out[k] = deepClean(obj[k]);
+    return out;
+  }
+  return obj;
+}
+
+
+/* =====================================================================
    2. HISTORY STORE
    ---------------------------------------------------------------------
    A tiny async key-value interface. Back it with anything:
@@ -553,6 +592,8 @@ NICHE: ${niche} | AUDIENCE: ${audience || 'general'}
 CONFIRMED TRENDS:
 ${list}
 
+${STYLE}
+
 Return ONLY valid JSON, same order:
 {"items":[{"angle":"the winning angle in 1-2 sentences","captionHook":"first line that stops the scroll","hashtags":["#a","#b","#c","#d","#e"]}]}`;
 
@@ -560,11 +601,15 @@ Return ONLY valid JSON, same order:
   const m = text.match(/\{[\s\S]*\}/);
   const parsed = JSON.parse(m ? m[0] : text);
 
+  // sanitize the AI creative layer so Ideas/Calendar entries saved from these
+  // trends are clean too (no em/en dash, no emoji)
+  const items = deepClean(parsed.items || []);
+
   // merge creative layer onto measured trends, tagging what's generated
   return trends.map((t, i) => ({
     ...t,
-    generated: parsed.items?.[i]
-      ? { ...parsed.items[i], _label: 'AI-written' }
+    generated: items[i]
+      ? { ...items[i], _label: 'AI-written' }
       : null,
   }));
 }
@@ -636,6 +681,7 @@ async function runScan(opts) {
    ===================================================================== */
 module.exports = {
   CONFIG,
+  STYLE, cleanCopy, deepClean,
   HistoryStore, InMemoryStore,
   signalKey, recordObservations,
   computeSignalStats, scoreTrend,
