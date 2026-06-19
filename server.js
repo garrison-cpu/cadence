@@ -264,21 +264,19 @@ function parseVideos(raw) {
 }
 async function pullTikTok(niche) {
   console.log('[tiktok] pullTikTok ENTER niche=', niche);
+  // TokAPI Basic tier allows only 10 req/min; firing two endpoints in parallel
+  // trips the limiter (429/403). Use a SINGLE niche-relevant search call.
+  let search;
   try {
-    const [trending, search] = await Promise.allSettled([
-      tokGet('/v1/feed/recommended?pull_type=0&region=US&count=20'),
-      tokGet('/v1/search/video?keyword=' + encodeURIComponent(niche) + '&count=15&offset=0'),
-    ]);
-    const tv = trending.status === 'fulfilled' ? parseVideos(trending.value) : [];
-    const sv = search.status === 'fulfilled' ? parseVideos(search.value) : [];
-    const out = [...sv, ...tv].slice(0, 15);
-    console.log('[scan] tiktok items:', out.length);
-    return out;
+    search = await tokGet('/v1/search/video?keyword=' + encodeURIComponent(niche) + '&count=15&offset=0');
   } catch (e) {
     console.error('[tiktok] pullTikTok FAILED:', e && e.message);
     console.warn('[tiktok] pull failed:', e.message);
     return [];
   }
+  const out = parseVideos(search).slice(0, 15);
+  console.log('[scan] tiktok items:', out.length);
+  return out;
 }
 
 // --- Reddit: server-side port of fetchReddit() from app.html. Returns
