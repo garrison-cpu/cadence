@@ -13,6 +13,7 @@
      POST /api/claude    -> proxy to Anthropic (key added here)
      GET  /api/tokapi/*  -> proxy to TokAPI    (key added here)
      GET  /api/reddit/*  -> proxy to Reddit    (avoids browser CORS)
+     GET  /api/youtube/* -> proxy to YouTube   (key added here)
 
    ACCESS:
    Open — anyone with the link can use it. Because all usage runs on YOUR keys,
@@ -29,13 +30,15 @@ const PORT = process.env.PORT || 3000;
 // ── Secrets (set these in Replit → Tools → Secrets) ─────────────────────────
 const CLAUDE_KEY   = process.env.CLAUDE_API_KEY || '';
 const RAPID_KEY    = process.env.RAPIDAPI_KEY   || '';
+const YOUTUBE_KEY  = process.env.YOUTUBE_API_KEY || '';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL   || 'claude-sonnet-4-6';
 
 const TOKAPI_HOST = 'tokapi-mobile-version.p.rapidapi.com';
 const TOKAPI_BASE = 'https://' + TOKAPI_HOST;
 
-if (!CLAUDE_KEY) console.warn('⚠  CLAUDE_API_KEY is not set — /api/claude will fail.');
-if (!RAPID_KEY)  console.warn('⚠  RAPIDAPI_KEY is not set — /api/tokapi will fail.');
+if (!CLAUDE_KEY)  console.warn('⚠  CLAUDE_API_KEY is not set — /api/claude will fail.');
+if (!RAPID_KEY)   console.warn('⚠  RAPIDAPI_KEY is not set — /api/tokapi will fail.');
+if (!YOUTUBE_KEY) console.warn('⚠  YOUTUBE_API_KEY is not set — /api/youtube will fail.');
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -90,6 +93,40 @@ app.get('/api/reddit/*', async (req, res) => {
     res.status(r.status).type('application/json').send(text);
   } catch (e) {
     res.status(502).json({ error: { message: 'Reddit proxy error: ' + e.message } });
+  }
+});
+
+// ── YouTube Data API v3 proxy (key added here, never echoed back) ────────────
+// NOTE: search.list costs 100 quota units per call and the daily default is
+// only ~100 searches — use /api/youtube/search sparingly. (Caching is a
+// separate task; none is added here.)
+app.get('/api/youtube/search', async (req, res) => {
+  try {
+    const params = new URLSearchParams(req.query);
+    if (!params.has('part'))       params.set('part', 'snippet');
+    if (!params.has('type'))       params.set('type', 'video');
+    if (!params.has('maxResults')) params.set('maxResults', '10');
+    params.set('key', YOUTUBE_KEY);          // ← secret, server-side only
+    const upstream = 'https://www.googleapis.com/youtube/v3/search?' + params.toString();
+    const r = await fetch(upstream);
+    const text = await r.text();
+    res.status(r.status).type(r.headers.get('content-type') || 'application/json').send(text);
+  } catch (e) {
+    res.status(502).json({ error: { message: 'YouTube proxy error: ' + e.message } });
+  }
+});
+
+app.get('/api/youtube/videos', async (req, res) => {
+  try {
+    const params = new URLSearchParams(req.query);
+    if (!params.has('part')) params.set('part', 'snippet,statistics');
+    params.set('key', YOUTUBE_KEY);          // ← secret, server-side only
+    const upstream = 'https://www.googleapis.com/youtube/v3/videos?' + params.toString();
+    const r = await fetch(upstream);
+    const text = await r.text();
+    res.status(r.status).type(r.headers.get('content-type') || 'application/json').send(text);
+  } catch (e) {
+    res.status(502).json({ error: { message: 'YouTube proxy error: ' + e.message } });
   }
 });
 
