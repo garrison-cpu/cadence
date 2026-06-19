@@ -239,9 +239,11 @@ async function apifyCached(cacheKey, actorId, input, ttlHours = 12) {
 // --- TikTok: port of the TokAPI search+recommended pull + parseVideos logic
 //     currently living in public/app.html. Returns [{ desc, views, likes }].
 async function tokGet(p) {
+  console.log('[tiktok] tokGet ->', TOKAPI_BASE + p);
   const r = await fetch(TOKAPI_BASE + p, {
     headers: { 'x-rapidapi-key': RAPID_KEY, 'x-rapidapi-host': TOKAPI_HOST },
   });
+  console.log('[tiktok] tokGet status', r.status, 'for', p);
   if (!r.ok) throw new Error('TokAPI ' + r.status);
   return r.json();
 }
@@ -261,6 +263,7 @@ function parseVideos(raw) {
   }).filter(v => v.views > 0 || v.likes > 0);
 }
 async function pullTikTok(niche) {
+  console.log('[tiktok] pullTikTok ENTER niche=', niche);
   try {
     const [trending, search] = await Promise.allSettled([
       tokGet('/v1/feed/recommended?pull_type=0&region=US&count=20'),
@@ -272,6 +275,7 @@ async function pullTikTok(niche) {
     console.log('[scan] tiktok items:', out.length);
     return out;
   } catch (e) {
+    console.error('[tiktok] pullTikTok FAILED:', e && e.message);
     console.warn('[tiktok] pull failed:', e.message);
     return [];
   }
