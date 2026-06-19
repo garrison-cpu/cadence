@@ -999,7 +999,20 @@ function ScannerSetup({ T, niche, setNiche, audience, setAudience, platforms, to
 
 /* SCAN — animated waveform with Cadence gradient */
 function ScanScreen({ T, statusMsg, platCount, t }) {
-  const pct = Math.min(98, Math.floor(t*22));
+  // Honest progress: reflect the actual scan pipeline stage rather than a timed fake.
+  // Ordered to match the setStatusMsg() calls in runScan(); optional stages that get
+  // skipped (e.g. TikTok/Reddit not selected) simply advance the bar forward.
+  const SCAN_STAGES = [
+    'pulling tiktok data…',
+    'pulling reddit posts…',
+    'researching posting times…',
+    'checking google trends…',
+    'analysing signals…',
+  ];
+  const stageIdx = SCAN_STAGES.indexOf(statusMsg);
+  // +1 segment reserved for the final result hand-off, so the last in-flight stage
+  // tops out below 100% instead of pretending the scan is finished.
+  const pct = stageIdx < 0 ? 4 : Math.round(((stageIdx + 1) / (SCAN_STAGES.length + 1)) * 100);
   return h('div', { style: { flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding: 48, gap: 22, background: T.canvas } },
     /* gradient pulse rings */
     h('div', { style: { position:'relative', width: 220, height: 220, display:'flex', alignItems:'center', justifyContent:'center', marginBottom: 8 } },
@@ -1061,6 +1074,29 @@ Human, authentic, platform-native voice.`);
   const addCal = () => { if (!pdate) { alert('Select a date first.'); return; } const c = store.get('cp_calendar',[]); c.push({ id:'cal_'+Date.now(), title: tr.title, platform: tr.platform, date: pdate, content: genOut, addedAt: new Date().toISOString() }); store.set('cp_calendar', c); alert('Added to calendar.'); };
   const addIdeas = () => { const i = store.get('cp_ideas',[]); i.push({ id:'idea_'+Date.now(), title: tr.title, platform: tr.platform, format: tr.format, content: genOut, addedAt: new Date().toISOString() }); store.set('cp_ideas', i); alert('Saved to ideas bank.'); };
 
+  /* Angles + hashtags — surfaced on the main trend card itself (not the side rail) */
+  function AnglesAndTags() {
+    const angles = tr.contentAngles || [];
+    const tags = tr.hashtags || [];
+    if (!angles.length && !tags.length) return null;
+    return h('div', { style: { display:'grid', gridTemplateColumns:'1fr 1fr', gap: 18, marginTop: 20, paddingTop: 18, borderTop:`1px solid ${T.hairlineSoft}` } },
+      angles.length > 0 && h('div', null,
+        h('div', { style: { ...eb(T), marginBottom: 10 } }, 'Content angles'),
+        h('div', { style: { display:'flex', flexDirection:'column', gap: 8 } },
+          angles.map((a,i) => h('div', { key: i, style: { fontFamily: T.fontBody, fontSize: 13.5, color: T.body, background: T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding:'9px 12px', lineHeight: 1.45 } },
+            h('span', { style: { ...mono(T), color: T.mute, marginRight: 6 } }, `${i+1}.`), a
+          ))
+        )
+      ),
+      tags.length > 0 && h('div', null,
+        h('div', { style: { ...eb(T), marginBottom: 10 } }, 'Hashtags'),
+        h('div', { style: { display:'flex', flexWrap:'wrap', gap: 6, alignContent:'flex-start' } },
+          tags.map(tg => h('span', { key: tg, style: { fontFamily: T.fontMono, fontSize: 11.5, color: T.body, background: T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, padding:'4px 10px', borderRadius: T.rInput } }, tg))
+        )
+      )
+    );
+  }
+
   /* Main hero card — visually differs per direction */
   function HeroCard() {
     if (isEditorial) {
@@ -1081,7 +1117,7 @@ Human, authentic, platform-native voice.`);
         h('h1', { className:'serif', style: { fontSize: 56, fontWeight: 400, letterSpacing:'-0.02em', lineHeight: 1.02, color: T.ink, margin:'8px 0 18px' } }, tr.title),
         h('div', { style: { padding:'12px 0', borderTop:`1px solid ${T.hairlineSoft}`, borderBottom:`1px solid ${T.hairlineSoft}`, marginBottom: 22 } }, h(Sparkline, { t, height: 56, gradient: true })),
         h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap: 0, marginBottom: 20 } },
-          [['Engagement', tr.engagementRate||'—'],['Competition', tr.competition||'—'],['Search vol.', tr.searchVolume||'—'],['Best time', tr.bestTimeToPost||'—']].map(([k,v],i) =>
+          [['Likes / view', tr.engagementRate||'—'],['Competition', tr.competition||'—'],['Search vol.', tr.searchVolume||'—'],['Best time', tr.bestTimeToPost||'—']].map(([k,v],i) =>
             h('div', { key: k, style: { paddingRight: 16, borderRight: i<3 ? `1px solid ${T.hairlineSoft}`:'none', paddingLeft: i>0?16:0 } },
               h('div', { style: mono(T) }, k.toUpperCase()),
               h('div', { className:'serif', style: { fontSize: 24, letterSpacing:'-0.015em', color: T.ink, marginTop: 4, lineHeight: 1.05 } }, v)
@@ -1095,7 +1131,8 @@ Human, authentic, platform-native voice.`);
         tr.bestTimeToPost && tr.postingTimeRationale && h('div', { style: { borderLeft:`2px solid ${T.ink}`, paddingLeft: 14, marginTop: 18 } },
           h('div', { className:'serif-i', style: { fontSize: 18, color: T.ink } }, tr.bestTimeToPost),
           h('div', { style: { fontFamily: T.fontBody, fontSize: 14, color: T.body, marginTop: 4 } }, tr.postingTimeRationale)
-        )
+        ),
+        h(AnglesAndTags)
       );
     }
     if (isFull) {
@@ -1118,7 +1155,7 @@ Human, authentic, platform-native voice.`);
         h('h2', { className:'serif', style: { fontSize: 36, fontWeight: 400, letterSpacing:'-0.02em', lineHeight: 1.05, margin:'0 0 22px', color: T.ink, position:'relative' } }, tr.title),
         h('div', { style: { padding:'10px 0', marginBottom: 20 } }, h(Sparkline, { t, height: 64, gradient: true })),
         h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap: 18, marginBottom: 20, position:'relative' } },
-          [['Engagement', tr.engagementRate||'—'],['Competition', tr.competition||'—'],['Search vol.', tr.searchVolume||'—'],['Best time', tr.bestTimeToPost||'—']].map(([k,v]) =>
+          [['Likes / view', tr.engagementRate||'—'],['Competition', tr.competition||'—'],['Search vol.', tr.searchVolume||'—'],['Best time', tr.bestTimeToPost||'—']].map(([k,v]) =>
             h('div', { key: k, style: { padding:'12px 14px', background: T.surfaceHi, borderRadius: 14 } },
               h('div', { style: { ...eb(T), marginBottom: 5 } }, k),
               h('div', { style: { fontFamily: T.fontBody, fontSize: 20, fontWeight: 700, letterSpacing:'-0.025em', color: T.ink } }, v)
@@ -1135,7 +1172,8 @@ Human, authentic, platform-native voice.`);
             h('div', { className:'serif', style: { fontSize: 18, color: T.ink, letterSpacing:'-0.01em' } }, tr.bestTimeToPost),
             h('div', { style: { fontFamily: T.fontBody, fontSize: 14, color: T.body, marginTop: 2 } }, tr.postingTimeRationale)
           )
-        )
+        ),
+        h(AnglesAndTags)
       );
     }
     /* Bridge */
@@ -1157,7 +1195,7 @@ Human, authentic, platform-native voice.`);
       h('h2', { style: { fontFamily: T.fontBody, fontSize: 28, fontWeight: 700, letterSpacing:'-0.025em', lineHeight: 1.1, margin:'0 0 18px', color: T.ink } }, tr.title),
       h('div', { style: { padding:'6px 0', borderTop:`1px solid ${T.hairlineSoft}`, borderBottom:`1px solid ${T.hairlineSoft}`, marginBottom: 18 } }, h(Sparkline, { t, height: 48, gradient: true })),
       h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap: 18, marginBottom: 18 } },
-        [['Engagement', tr.engagementRate||'—'],['Competition', tr.competition||'—'],['Search vol.', tr.searchVolume||'—'],['Best time', tr.bestTimeToPost||'—']].map(([k,v]) =>
+        [['Likes / view', tr.engagementRate||'—'],['Competition', tr.competition||'—'],['Search vol.', tr.searchVolume||'—'],['Best time', tr.bestTimeToPost||'—']].map(([k,v]) =>
           h('div', { key: k },
             h('div', { style: { ...eb(T), marginBottom: 4 } }, k),
             h('div', { style: { fontFamily: T.fontBody, fontSize: 17, fontWeight: 700, letterSpacing:'-0.02em', color: T.ink } }, v)
@@ -1171,11 +1209,12 @@ Human, authentic, platform-native voice.`);
       tr.bestTimeToPost && tr.postingTimeRationale && h('div', { style: { borderLeft:`2px solid ${T.accent}`, paddingLeft: 14, marginTop: 14 } },
         h('div', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 600, color: T.ink } }, tr.bestTimeToPost),
         h('div', { style: { fontFamily: T.fontBody, fontSize: 13.5, color: T.body, marginTop: 2 } }, tr.postingTimeRationale)
-      )
+      ),
+      h(AnglesAndTags)
     );
   }
 
-  return h('div', { style: { display:'grid', gridTemplateColumns:'1fr 300px', height:'100%', overflow:'hidden' } },
+  return h('div', { style: { display:'grid', gridTemplateColumns:'1fr 300px', height:'100%', overflow:'hidden', width:'100%', maxWidth: 1320, margin:'0 auto' } },
 
     /* MAIN COLUMN */
     h('div', { style: { padding: isFull ? '28px 44px' : '24px 40px', overflowY:'auto', display:'flex', flexDirection:'column', gap: 22, background: T.canvas } },
@@ -1263,18 +1302,6 @@ Human, authentic, platform-native voice.`);
       ),
       h('button', { onClick: ()=>setPlanOpen(true), style: { ...btnSec(T), width:'100%', display:'flex', justifyContent:'space-between' } }, 'Generate draft', '↗'),
       h('button', { onClick: ()=>onOpenStudio(tr), style: { ...btnSec(T), width:'100%', display:'flex', justifyContent:'space-between', borderColor: T.accent, color: T.accentDeep } }, 'Build in Studio', '→'),
-
-      h('div', { style: { height: 1, background: T.hairline, margin:'4px 0' } }),
-
-      h('div', { style: eb(T) }, 'Hashtags'),
-      h('div', { style: { display:'flex', flexWrap:'wrap', gap: 5 } },
-        (tr.hashtags||[]).map(tg => h('span', { key: tg, style: { fontFamily: T.fontMono, fontSize: 11, color: T.body, background: T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, padding:'3px 9px', borderRadius: T.rInput } }, tg))
-      ),
-
-      h('div', { style: eb(T) }, 'Content angles'),
-      (tr.contentAngles||[]).map((a,i) => h('div', { key: i, style: { fontFamily: T.fontBody, fontSize: 13, color: T.body, background: T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding:'9px 11px', lineHeight: 1.45 } },
-        h('span', { style: { ...mono(T), color: T.mute, marginRight: 6 } }, `${i+1}.`), a
-      )),
 
       h('div', { style: { marginTop:'auto', background: isFull ? `linear-gradient(135deg, ${T.g1}10, ${T.g3}10)` : T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding: 14 } },
         h('div', { style: { ...eb(T), marginBottom: 6 } }, 'Caption hook'),
