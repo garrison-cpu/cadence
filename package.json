@@ -11,6 +11,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@replit/database": "^3.0.0",
     "express": "^4.19.2"
   }
 }

@@ -290,6 +290,62 @@ async function fetchReddit(niche) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
+   ENGINE ADAPTER  — map an engine trend (Cadence decided + Claude wrote the
+   creative layer) into the exact shape the existing TrendCard already renders,
+   so the card layout never needs redesigning.
+
+   HONEST LABELLING: numbers from t.measured are REAL (measured by Cadence).
+   Anything from t.generated is AI-written. We only flip the "est." tag off
+   (engagementRateReal:true) when measured.engagementRate actually exists.
+   ════════════════════════════════════════════════════════════════════════════ */
+function mapEngineTrend(t, i) {
+  const m = t.measured || {};
+  const meta = t.meta || {};
+  const plat = t.platform || '';
+  const erReal = m.engagementRate != null;
+  const out = {
+    id: t.id || ('t' + (i + 1)),
+    title: t.signal,
+    platform: plat,
+    heat: m.heat,
+    // "Why it's trending" — the AI-written angle (clearly the creative layer)
+    hook: t.generated?.angle || '',
+    // measured engagement (real) — formatted to a percentage, else em-dash
+    engagementRate: erReal ? (m.engagementRate * 100).toFixed(1) + '%' : '—',
+    engagementRateReal: erReal,          // real -> hide the "est." tag
+    // REAL momentum vs baseline (measured), not a model guess
+    delta: (m.deltaPct >= 0 ? '+' : '') + Math.round(m.deltaPct || 0) + '%',
+    contentAngles: t.generated?.angle ? [t.generated.angle] : [],
+    captionHook: t.generated?.captionHook || '',
+    hashtags: t.generated?.hashtags || [],
+    // these stay model/heuristic estimates — left blank so they read "—" / "est."
+    competition: '—',
+    searchVolume: '—',
+    bestTimeToPost: '',
+    realVideos: [],
+    redditPosts: [],
+    realYoutube: [],
+  };
+
+  // dataSource lights the "LIVE DATA" badge for measured platforms
+  out.dataSource = plat ? plat + '_live' : 'crossplatform_ai';
+
+  // attach the real source item(s) from meta, per platform
+  if (plat === 'tiktok') {
+    out.realVideos = [{ desc: t.signal, views: m.current, likes: meta.likes, url: meta.url }];
+  } else if (plat === 'youtube') {
+    out.realYoutube = [{ title: t.signal, viewCount: m.current, likeCount: meta.likeCount, commentCount: meta.commentCount || 0, url: meta.url }];
+  } else if (plat === 'reddit') {
+    out.redditPosts = [{ subreddit: meta.subreddit, title: t.signal, score: m.current, comments: meta.comments, url: meta.url }];
+  } else if (plat === 'google_trends') {
+    out.googleTrendSignal = t.signal;
+  } else if (plat === 'instagram') {
+    out.realVideos = [{ desc: t.signal, views: m.current, likes: meta.likes, url: meta.url }];
+  }
+  return out;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
    PRIMITIVES  — small reusable bits, all read from T
    ════════════════════════════════════════════════════════════════════════════ */
 
@@ -1667,6 +1723,10 @@ function App() {
   const toggleFmt = f => setFormats(p => p.includes(f) ? p.filter(x => x!==f) : [...p, f]);
   const toggleSave = id => { const n = savedIds.includes(id) ? savedIds.filter(x => x!==id) : [...savedIds, id]; setSavedIds(n); store.set('cp_saved_ids', n); };
 
+  // ── Primary scan path: the live trend engine (POST /api/scan) ──────────────
+  // Cadence decides what qualifies from REAL measured numbers; Claude only
+  // writes the creative layer. The old client-side path below is kept ONLY as a
+  // fallback so a bad deploy can never brick scanning.
   const runScan = async (nicheOverride) => {
     const override = typeof nicheOverride === 'string' ? nicheOverride : '';
     const scanNiche = override || niche;
@@ -1675,6 +1735,38 @@ function App() {
     setTab('scanner');
     setScanPhase('scan');
     setTrends([]);
+
+    try {
+      setStatusMsg('reading sources…');
+      const r = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ niche: scanNiche, audience, platforms })
+      });
+      if (!r.ok) throw new Error('scan HTTP ' + r.status);
+      const data = await r.json();
+      if (data.error) throw new Error(data.error.message || 'scan error');
+      const engineTrends = data.trends || [];
+      if (!engineTrends.length) throw new Error('engine returned zero trends');
+      setStatusMsg('writing angles…');
+      setTrends(engineTrends.map(mapEngineTrend));
+      setScanPhase('result');
+      return;
+    } catch (e) {
+      console.warn('[scan] engine path failed — falling back to local scan:', e.message);
+    }
+
+    // Fallback ONLY — original client-side scan.
+    try {
+      await runScanLocal(scanNiche);
+    } catch (e) {
+      alert('Scan failed: ' + e.message);
+      setScanPhase('setup');
+    }
+  };
+
+  const runScanLocal = async (scanNiche) => {
     const rapidKey = store.get('cp_rapidapi_key', DEFAULT_RAPID_KEY);
 
     let tiktokVideos = [];

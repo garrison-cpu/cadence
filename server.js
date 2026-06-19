@@ -21,8 +21,10 @@
    an access gate in front of the /api/* routes.
    ========================================================================== */
 
-const express = require('express');
-const path    = require('path');
+const express  = require('express');
+const path     = require('path');
+const engine   = require('./trend-engine');
+const Database = require('@replit/database');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -36,11 +38,31 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL   || 'claude-sonnet-4-6';
 const TOKAPI_HOST = 'tokapi-mobile-version.p.rapidapi.com';
 const TOKAPI_BASE = 'https://' + TOKAPI_HOST;
 
+// Apify powers the live Google Trends + Instagram sources used by /api/scan.
+// The token NEVER leaves the server (never echoed to the browser).
+const APIFY_TOKEN = process.env.APIFY_TOKEN || '';
+
 if (!CLAUDE_KEY)  console.warn('⚠  CLAUDE_API_KEY is not set — /api/claude will fail.');
 if (!RAPID_KEY)   console.warn('⚠  RAPIDAPI_KEY is not set — /api/tokapi will fail.');
 if (!YOUTUBE_KEY) console.warn('⚠  YOUTUBE_API_KEY is not set — /api/youtube will fail.');
+if (!APIFY_TOKEN) console.warn('⚠  APIFY_TOKEN is not set — /api/scan Google Trends + Instagram sources will be empty.');
 
 app.use(express.json({ limit: '1mb' }));
+
+// ── Trend-engine history store (Replit DB-backed) ───────────────────────────
+// One shared store: the engine reads/writes observation history through it so
+// momentum is computed from real accumulated data, not invented per scan.
+const db = new Database();
+// Follows the NOTES FOR GARRISON adapter, but unwraps the Result envelope the
+// installed @replit/database v3 returns ({ ok, value }) so getJSON/listKeys hand
+// the engine the raw value/array it expects. Works with both v2 and v3 returns.
+const unwrap = (r) => (r && typeof r === 'object' && 'ok' in r) ? (r.ok ? r.value : null) : r;
+class ReplitStore extends engine.HistoryStore {
+  async getJSON(k)       { return unwrap(await db.get(k)) ?? null; }
+  async setJSON(k, v)    { await db.set(k, v); }
+  async listKeys(prefix) { return unwrap(await db.list(prefix)) || []; }
+}
+const store = new ReplitStore();
 
 // ── Claude proxy ─────────────────────────────────────────────────────────────
 app.post('/api/claude', async (req, res) => {
@@ -127,6 +149,242 @@ app.get('/api/youtube/videos', async (req, res) => {
     res.status(r.status).type(r.headers.get('content-type') || 'application/json').send(text);
   } catch (e) {
     res.status(502).json({ error: { message: 'YouTube proxy error: ' + e.message } });
+  }
+});
+
+/* ============================================================================
+   TREND ENGINE — server-side fetchers + scan orchestration
+   ----------------------------------------------------------------------------
+   These power POST /api/scan. Cadence (the engine) decides what qualifies as a
+   trend from REAL measured numbers; Claude only writes the creative layer.
+   All API keys + the Apify token stay here, server-side only.
+   ========================================================================== */
+
+// Reuse the exact Anthropic request body /api/claude builds, but return the
+// concatenated text instead of the raw API envelope.
+async function claudeCallText(prompt, useSearch = false) {
+  const body = {
+    model: CLAUDE_MODEL,
+    max_tokens: Math.min(4000, 16000),
+    messages: [{ role: 'user', content: String(prompt) }],
+  };
+  if (useSearch) body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
+
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': CLAUDE_KEY,              // ← secret, server-side only
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json();
+  if (!r.ok || data.error) {
+    throw new Error('Claude API error ' + r.status + ': ' + (data.error?.message || JSON.stringify(data.error || {})));
+  }
+  return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+}
+
+// Apify run-with-cache. Reads a stored { items, ts }; if fresh enough, serves
+// it. Otherwise runs the actor synchronously, caches the dataset items, and
+// returns them. On any error, falls back to cached items, else []. The Apify
+// token is never exposed to the client.
+async function apifyCached(cacheKey, actorId, input, ttlHours = 12) {
+  const key = 'apify:' + cacheKey;
+  let cached = null;
+  try { cached = await store.getJSON(key); } catch {}
+  if (cached && cached.items && (Date.now() - cached.ts) < ttlHours * 3600000) {
+    return cached.items;
+  }
+  try {
+    const url = `https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?token=${APIFY_TOKEN}`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!r.ok) throw new Error('Apify ' + actorId + ' HTTP ' + r.status);
+    const items = await r.json();
+    const arr = Array.isArray(items) ? items : [];
+    try { await store.setJSON(key, { items: arr, ts: Date.now() }); } catch {}
+    return arr;
+  } catch (e) {
+    console.warn('[apify] ' + actorId + ' failed:', e.message);
+    return cached?.items || [];
+  }
+}
+
+// --- TikTok: port of the TokAPI search+recommended pull + parseVideos logic
+//     currently living in public/app.html. Returns [{ desc, views, likes }].
+async function tokGet(p) {
+  const r = await fetch(TOKAPI_BASE + p, {
+    headers: { 'x-rapidapi-key': RAPID_KEY, 'x-rapidapi-host': TOKAPI_HOST },
+  });
+  if (!r.ok) throw new Error('TokAPI ' + r.status);
+  return r.json();
+}
+function parseVideos(raw) {
+  let items = [];
+  if (Array.isArray(raw)) items = raw;
+  else if (raw?.aweme_list) items = raw.aweme_list;
+  else if (raw?.data?.aweme_list) items = raw.data.aweme_list;
+  else if (raw?.data?.video_list) items = raw.data.video_list;
+  return items.slice(0, 8).map(v => {
+    const s = v.statistics || v.stats || {};
+    return {
+      desc: (v.desc || '').substring(0, 90),
+      views: s.play_count || s.views || 0,
+      likes: s.digg_count || s.likes || 0,
+    };
+  }).filter(v => v.views > 0 || v.likes > 0);
+}
+async function pullTikTok(niche) {
+  try {
+    const [trending, search] = await Promise.allSettled([
+      tokGet('/v1/feed/recommended?pull_type=0&region=US&count=20'),
+      tokGet('/v1/search/video?keyword=' + encodeURIComponent(niche) + '&count=15&offset=0'),
+    ]);
+    const tv = trending.status === 'fulfilled' ? parseVideos(trending.value) : [];
+    const sv = search.status === 'fulfilled' ? parseVideos(search.value) : [];
+    return [...sv, ...tv].slice(0, 15);
+  } catch (e) {
+    console.warn('[tiktok] pull failed:', e.message);
+    return [];
+  }
+}
+
+// --- Reddit: server-side port of fetchReddit() from app.html. Returns
+//     [{ title, score, comments, subreddit, url }].
+async function fetchRedditServer(niche, window = 'week') {
+  const headers = { 'User-Agent': 'Cadence/1.0' };
+  let posts = [];
+  for (const q of [niche.replace(/\s+/g, '').toLowerCase(), niche.replace(/\s+/g, '_'), niche.split(' ')[0]]) {
+    try {
+      const r = await fetch(`https://www.reddit.com/r/${q}/hot.json?limit=10`, { headers });
+      if (!r.ok) continue;
+      const d = await r.json();
+      const kids = d?.data?.children || [];
+      if (kids.length >= 4) {
+        posts = kids.map(c => ({
+          title: c.data.title || '',
+          score: c.data.score || 0,
+          comments: c.data.num_comments || 0,
+          subreddit: c.data.subreddit || q,
+          url: `https://reddit.com${c.data.permalink}`,
+        })).filter(p => p.score > 0);
+        break;
+      }
+    } catch { continue; }
+  }
+  if (posts.length < 3) {
+    try {
+      const r = await fetch(`https://www.reddit.com/search.json?q=${encodeURIComponent(niche)}&sort=hot&limit=10&t=${window}`, { headers });
+      if (r.ok) {
+        const d = await r.json();
+        posts = [...posts, ...(d?.data?.children || []).map(c => ({
+          title: c.data.title || '',
+          score: c.data.score || 0,
+          comments: c.data.num_comments || 0,
+          subreddit: c.data.subreddit || '',
+          url: `https://reddit.com${c.data.permalink}`,
+        }))].slice(0, 10);
+      }
+    } catch {}
+  }
+  return posts;
+}
+
+// --- Instagram: live hashtag posts via Apify (cached 12h).
+async function fetchInstagram(niche) {
+  return apifyCached('ig:' + niche, 'apify~instagram-scraper', {
+    search: niche, searchType: 'hashtag', searchLimit: 2, resultsLimit: 30,
+    resultsType: 'posts', onlyPostsNewerThan: '14 days', addParentData: false,
+  }, 12);
+}
+
+// --- Google Trends: live interest-over-time series via Apify (cached 12h),
+//     normalized to [{ date, value0to100 }] for the engine's history seed.
+async function fetchTrendSeries(term) {
+  const items = await apifyCached('gt:' + term, 'apify~google-trends-scraper', {
+    searchTerms: [term], timeRange: 'today 1-m', geo: 'US', viewedFrom: 'us',
+    isMultiple: false, skipDebugScreen: false,
+  }, 12);
+  const rec = items[0] || {};
+  const tl = rec.interestOverTime_timelineData || rec.interestOverTime || [];
+  return tl
+    .filter(p => !Array.isArray(p.hasData) || p.hasData[0] !== false)
+    .map(p => {
+      const v = Array.isArray(p.value) ? p.value[0] : (p.value ?? p.value0to100);
+      const date = p.formattedAxisTime || p.formattedTime
+        || (p.time ? new Date(Number(p.time) * 1000).toISOString().slice(0, 10) : p.date);
+      return { date, value0to100: Number(v) };
+    })
+    .filter(p => Number.isFinite(p.value0to100));
+}
+
+// --- YouTube: server-side port of the /api/youtube search+videos pull used by
+//     app.html. Returns [{ id, title, viewCount, likeCount, commentCount, url }].
+async function pullYouTube(niche) {
+  try {
+    const sParams = new URLSearchParams({
+      part: 'snippet', type: 'video', order: 'date', maxResults: '15', q: niche, key: YOUTUBE_KEY,
+    });
+    const sr = await fetch('https://www.googleapis.com/youtube/v3/search?' + sParams.toString());
+    if (!sr.ok) return [];
+    const sd = await sr.json();
+    const ids = (sd.items || []).map(it => it?.id?.videoId).filter(Boolean);
+    if (!ids.length) return [];
+    const vParams = new URLSearchParams({
+      part: 'snippet,statistics', id: ids.join(','), key: YOUTUBE_KEY,
+    });
+    const vr = await fetch('https://www.googleapis.com/youtube/v3/videos?' + vParams.toString());
+    if (!vr.ok) return [];
+    const vd = await vr.json();
+    return (vd.items || []).map(it => {
+      const s = it.statistics || {};
+      return {
+        id: it.id,
+        title: (it.snippet?.title || '').substring(0, 90),
+        viewCount: parseInt(s.viewCount, 10) || 0,
+        likeCount: parseInt(s.likeCount, 10) || 0,
+        commentCount: parseInt(s.commentCount, 10) || 0,
+        url: it.id ? 'https://www.youtube.com/watch?v=' + it.id : null,
+      };
+    }).filter(v => v.viewCount > 0 || v.likeCount > 0)
+      .sort((a, b) => b.viewCount - a.viewCount);
+  } catch (e) {
+    console.warn('[youtube] server pull failed:', e.message);
+    return [];
+  }
+}
+
+// ── Scan: Cadence decides the trends, Claude writes the creative layer ───────
+app.post('/api/scan', async (req, res) => {
+  try {
+    const { niche, audience, platforms } = req.body || {};
+    if (!niche || !String(niche).trim()) {
+      return res.status(400).json({ error: { message: 'Missing niche.' } });
+    }
+    const plats = Array.isArray(platforms) && platforms.length
+      ? platforms
+      : ['tiktok', 'reddit', 'youtube', 'instagram', 'google_trends'];
+
+    const youtubeVideos = plats.includes('youtube') ? await pullYouTube(niche) : [];
+
+    const result = await engine.runScan({
+      store, niche, audience, platforms: plats,
+      tiktokVideos: plats.includes('tiktok') ? await pullTikTok(niche) : [],
+      fetchReddit: fetchRedditServer,
+      fetchTrendSeries,
+      fetchInstagram,
+      youtubeVideos,
+      claudeCall: claudeCallText,
+      onStatus: () => {},
+    });
+    res.json(result); // { trends, note? }
+  } catch (e) {
+    res.status(502).json({ error: { message: 'Scan error: ' + e.message } });
   }
 });
 
