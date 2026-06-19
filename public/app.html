@@ -887,7 +887,7 @@ const SCANNER_PLATS = [
   { id:'instagram',     label:'Instagram',      live:true,  desc:'Trends via Claude AI search', },
   { id:'reddit',        label:'Reddit',         live:true,  desc:'Hot posts, no auth needed', },
   { id:'google_trends', label:'Google Trends',  live:true,  desc:'Rising queries via web search', },
-  { id:'youtube',       label:'YouTube',        live:false, desc:'Top videos via AI analysis', },
+  { id:'youtube',       label:'YouTube',        live:true,  desc:'Live video data via YouTube API', },
   { id:'threads',       label:'Threads',        live:false, desc:'Topics via AI analysis', },
 ];
 const TONE_DEFS = [ { id:'educational', l:'Educational' }, { id:'entertaining', l:'Entertaining' }, { id:'inspirational', l:'Inspirational' }, { id:'controversial', l:'Contrarian' }, { id:'behind-scenes', l:'Behind the scenes' }, { id:'promotional', l:'Promotional' } ];
@@ -1052,6 +1052,20 @@ function ResultScreen({ T, t, trends, niche, savedIds, toggleSave, onBack, onOpe
   const isEditorial = T.direction === 'editorial';
   const isFull = T.direction === 'full';
 
+  /* Metric tiles — third element flags whether the value is computed from real
+     data. Only "Likes / view" is real (and only when a trend is YouTube-backed
+     and we aggregated likes÷views from the pulled videos). Everything else is a
+     model estimate and must be visibly labelled "est." so it never reads as real. */
+  const metrics = [
+    ['Likes / view', tr.engagementRate||'—', !!tr.engagementRateReal],
+    ['Competition',  tr.competition||'—',    false],
+    ['Search vol.',  tr.searchVolume||'—',   false],
+    ['Best time',    tr.bestTimeToPost||'—', false],
+  ];
+  const EstTag = () => h('span', { style: { fontFamily: T.fontMono, fontSize: 9, letterSpacing:'0.07em', color: T.mute, border:`1px solid ${T.hairline}`, borderRadius: 4, padding:'0 4px', marginLeft: 6, textTransform:'uppercase', verticalAlign:'middle' } }, 'est.');
+  const isLive = tr.dataSource==='tiktok_live' || tr.dataSource==='youtube_live';
+  const liveLabel = tr.dataSource==='tiktok_live' ? 'TikTok · Live data' : tr.dataSource==='youtube_live' ? 'YouTube · Live data' : 'AI signal';
+
   const doGen = async () => {
     setGenLoading(true); setGenOut('');
     try {
@@ -1107,7 +1121,7 @@ Human, authentic, platform-native voice.`);
             (tr.platform||'').toUpperCase(),
             h('span', { style: { color: T.mute } }, '·'),
             (tr.format||'').toUpperCase(),
-            tr.dataSource==='tiktok_live' && h(Fragment, null,
+            isLive && h(Fragment, null,
               h('span', { style: { color: T.mute } }, '·'),
               h('span', { className:'gt' }, 'LIVE DATA')
             )
@@ -1117,9 +1131,9 @@ Human, authentic, platform-native voice.`);
         h('h1', { className:'serif', style: { fontSize: 56, fontWeight: 400, letterSpacing:'-0.02em', lineHeight: 1.02, color: T.ink, margin:'8px 0 18px' } }, tr.title),
         h('div', { style: { padding:'12px 0', borderTop:`1px solid ${T.hairlineSoft}`, borderBottom:`1px solid ${T.hairlineSoft}`, marginBottom: 22 } }, h(Sparkline, { t, height: 56, gradient: true })),
         h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap: 0, marginBottom: 20 } },
-          [['Likes / view', tr.engagementRate||'—'],['Competition', tr.competition||'—'],['Search vol.', tr.searchVolume||'—'],['Best time', tr.bestTimeToPost||'—']].map(([k,v],i) =>
+          metrics.map(([k,v,real],i) =>
             h('div', { key: k, style: { paddingRight: 16, borderRight: i<3 ? `1px solid ${T.hairlineSoft}`:'none', paddingLeft: i>0?16:0 } },
-              h('div', { style: mono(T) }, k.toUpperCase()),
+              h('div', { style: mono(T) }, k.toUpperCase(), !real && h(EstTag)),
               h('div', { className:'serif', style: { fontSize: 24, letterSpacing:'-0.015em', color: T.ink, marginTop: 4, lineHeight: 1.05 } }, v)
             )
           )
@@ -1141,7 +1155,7 @@ Human, authentic, platform-native voice.`);
         h('div', { style: { position:'relative', display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 16 } },
           h('div', { style: { display:'flex', alignItems:'center', gap: 12 } },
             h(Chip, { T, kind:'solid', color: T.ink }, 'HOT NOW'),
-            tr.dataSource==='tiktok_live' && h(Chip, { T, kind:'solid', color: T.accentDeep }, 'LIVE DATA')
+            isLive && h(Chip, { T, kind:'solid', color: T.accentDeep }, 'LIVE DATA')
           ),
           h('div', { style: { display:'flex', alignItems:'center', gap: 14 } },
             h('span', { style: { display:'flex', alignItems:'center', gap: 8 } },
@@ -1151,13 +1165,13 @@ Human, authentic, platform-native voice.`);
             h(HeatPill, { T, heat: tr.heat })
           )
         ),
-        h('div', { style: { ...eb(T), marginBottom: 8 } }, (tr.dataSource==='tiktok_live'?'TikTok · Live data':'AI signal')+' · '+new Date().toLocaleTimeString()),
+        h('div', { style: { ...eb(T), marginBottom: 8 } }, liveLabel+' · '+new Date().toLocaleTimeString()),
         h('h2', { className:'serif', style: { fontSize: 36, fontWeight: 400, letterSpacing:'-0.02em', lineHeight: 1.05, margin:'0 0 22px', color: T.ink, position:'relative' } }, tr.title),
         h('div', { style: { padding:'10px 0', marginBottom: 20 } }, h(Sparkline, { t, height: 64, gradient: true })),
         h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap: 18, marginBottom: 20, position:'relative' } },
-          [['Likes / view', tr.engagementRate||'—'],['Competition', tr.competition||'—'],['Search vol.', tr.searchVolume||'—'],['Best time', tr.bestTimeToPost||'—']].map(([k,v]) =>
+          metrics.map(([k,v,real]) =>
             h('div', { key: k, style: { padding:'12px 14px', background: T.surfaceHi, borderRadius: 14 } },
-              h('div', { style: { ...eb(T), marginBottom: 5 } }, k),
+              h('div', { style: { ...eb(T), marginBottom: 5 } }, k, !real && h(EstTag)),
               h('div', { style: { fontFamily: T.fontBody, fontSize: 20, fontWeight: 700, letterSpacing:'-0.025em', color: T.ink } }, v)
             )
           )
@@ -1181,7 +1195,7 @@ Human, authentic, platform-native voice.`);
       h('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 14 } },
         h('div', { style: { display:'flex', alignItems:'center', gap: 10 } },
           h(Chip, { T, kind:'solid', color: T.ink }, 'HOT NOW'),
-          tr.dataSource==='tiktok_live' && h(Chip, { T, kind:'solid', color: T.accentDeep }, 'LIVE DATA')
+          isLive && h(Chip, { T, kind:'solid', color: T.accentDeep }, 'LIVE DATA')
         ),
         h('div', { style: { display:'flex', alignItems:'center', gap: 14 } },
           h('span', { style: eb(T, T.ink) },
@@ -1191,13 +1205,13 @@ Human, authentic, platform-native voice.`);
           h(HeatPill, { T, heat: tr.heat })
         )
       ),
-      h('div', { style: { ...eb(T), marginBottom: 10 } }, (tr.dataSource==='tiktok_live'?'TikTok · Live data':'AI signal')+' · '+new Date().toLocaleTimeString()),
+      h('div', { style: { ...eb(T), marginBottom: 10 } }, liveLabel+' · '+new Date().toLocaleTimeString()),
       h('h2', { style: { fontFamily: T.fontBody, fontSize: 28, fontWeight: 700, letterSpacing:'-0.025em', lineHeight: 1.1, margin:'0 0 18px', color: T.ink } }, tr.title),
       h('div', { style: { padding:'6px 0', borderTop:`1px solid ${T.hairlineSoft}`, borderBottom:`1px solid ${T.hairlineSoft}`, marginBottom: 18 } }, h(Sparkline, { t, height: 48, gradient: true })),
       h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap: 18, marginBottom: 18 } },
-        [['Likes / view', tr.engagementRate||'—'],['Competition', tr.competition||'—'],['Search vol.', tr.searchVolume||'—'],['Best time', tr.bestTimeToPost||'—']].map(([k,v]) =>
+        metrics.map(([k,v,real]) =>
           h('div', { key: k },
-            h('div', { style: { ...eb(T), marginBottom: 4 } }, k),
+            h('div', { style: { ...eb(T), marginBottom: 4 } }, k, !real && h(EstTag)),
             h('div', { style: { fontFamily: T.fontBody, fontSize: 17, fontWeight: 700, letterSpacing:'-0.02em', color: T.ink } }, v)
           )
         )
@@ -1231,13 +1245,22 @@ Human, authentic, platform-native voice.`);
       h(HeroCard),
 
       /* live data chips */
-      (tr.realVideos?.length > 0 || tr.redditPosts?.length > 0 || tr.googleTrendSignal) && h('div', { style: { display:'flex', flexDirection:'column', gap: 14 } },
+      (tr.realVideos?.length > 0 || tr.realYoutube?.length > 0 || tr.redditPosts?.length > 0 || tr.googleTrendSignal) && h('div', { style: { display:'flex', flexDirection:'column', gap: 14 } },
         tr.realVideos?.length > 0 && h('div', null,
           h('div', { style: { ...eb(T), marginBottom: 10 } }, 'Live TikTok videos'),
           h('div', { style: { display:'flex', gap: 8, flexWrap:'wrap' } },
             tr.realVideos.slice(0,4).map((v,i) => h('a', { key: i, href: v.url||'#', target:'_blank', rel:'noopener', style: { background: T.surface, border:`1px solid ${T.hairline}`, borderRadius: T.rInput, padding:'10px 13px', textDecoration:'none', color: T.ink, display:'flex', flexDirection:'column', gap: 4, maxWidth: 220, boxShadow: T.sh1 } },
               h('div', { style: { fontFamily: T.fontBody, fontSize: 12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color: T.ink, fontWeight: 500 } }, v.desc||'Video'),
               h('div', { style: { fontFamily: T.fontMono, fontSize: 11, color: T.mute, display:'flex', gap: 10 } }, h('span', null, `▶ ${fmt(v.views)}`), h('span', null, `♥ ${fmt(v.likes)}`))
+            ))
+          )
+        ),
+        tr.realYoutube?.length > 0 && h('div', null,
+          h('div', { style: { ...eb(T), marginBottom: 10 } }, 'Live YouTube videos'),
+          h('div', { style: { display:'flex', gap: 8, flexWrap:'wrap' } },
+            tr.realYoutube.slice(0,4).map((v,i) => h('a', { key: i, href: v.url||'#', target:'_blank', rel:'noopener', style: { background: T.surface, border:`1px solid ${T.hairline}`, borderRadius: T.rInput, padding:'10px 13px', textDecoration:'none', color: T.ink, display:'flex', flexDirection:'column', gap: 4, maxWidth: 220, boxShadow: T.sh1 } },
+              h('div', { style: { fontFamily: T.fontBody, fontSize: 12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color: T.ink, fontWeight: 500 } }, v.title||'Video'),
+              h('div', { style: { fontFamily: T.fontMono, fontSize: 11, color: T.mute, display:'flex', gap: 10 } }, h('span', null, `▶ ${fmt(v.viewCount)}`), h('span', null, `♥ ${fmt(v.likeCount)}`), h('span', null, `💬 ${fmt(v.commentCount)}`))
             ))
           )
         ),
@@ -1661,6 +1684,39 @@ function App() {
       } catch (e) { console.warn('TikTok:', e.message); }
     }
 
+    // ── YouTube pull (parallel to TikTok) — quota-conscious: at most 2 calls. ──
+    // One search.list (recent video IDs for the niche) + one videos.list to
+    // resolve real view/like/comment counts. NEVER loop the search call.
+    let youtubeVideos = [];
+    if (platforms.includes('youtube')) {
+      try {
+        setStatusMsg('pulling youtube data…');
+        const sr = await fetch('/api/youtube/search?part=snippet&type=video&order=date&maxResults=15&q=' + encodeURIComponent(scanNiche), { credentials:'same-origin' });
+        if (sr.ok) {
+          const sd = await sr.json();
+          const ids = (sd.items||[]).map(it => it?.id?.videoId).filter(Boolean);
+          if (ids.length) {
+            const vr = await fetch('/api/youtube/videos?part=snippet,statistics&id=' + encodeURIComponent(ids.join(',')), { credentials:'same-origin' });
+            if (vr.ok) {
+              const vd = await vr.json();
+              youtubeVideos = (vd.items||[]).map(it => {
+                const s = it.statistics || {};
+                return {
+                  id: it.id,
+                  title: (it.snippet?.title || '').substring(0, 90),
+                  viewCount: parseInt(s.viewCount, 10) || 0,
+                  likeCount: parseInt(s.likeCount, 10) || 0,
+                  commentCount: parseInt(s.commentCount, 10) || 0,
+                  url: it.id ? 'https://www.youtube.com/watch?v=' + it.id : null,
+                };
+              }).filter(v => v.viewCount > 0 || v.likeCount > 0)
+                .sort((a, b) => b.viewCount - a.viewCount);
+            }
+          }
+        }
+      } catch (e) { console.warn('YouTube:', e.message); }
+    }
+
     let redditPosts = [];
     if (platforms.includes('reddit')) {
       try { setStatusMsg('pulling reddit posts…'); redditPosts = await fetchReddit(scanNiche); }
@@ -1699,6 +1755,11 @@ function App() {
     const redditCtx = redditPosts.length
       ? redditPosts.slice(0,5).map((p,i) => `${i+1}. r/${p.subreddit} | "${p.title}" | Score: ${p.score}`).join('\n')
       : 'No Reddit data.';
+    // Real recent YouTube videos — fed in exactly like videoCtx so trend
+    // identification is grounded in real videos (with real view/like counts).
+    const youtubeCtx = youtubeVideos.length
+      ? youtubeVideos.slice(0,5).map((v,i) => `${i+1}. "${v.title}" — ${fmt(v.viewCount)} views, ${fmt(v.likeCount)} likes`).join('\n')
+      : 'No YouTube data.';
 
     // FIX 4: schema trimmed — removed postingTimeRationale, topVideoViews,
     //         googleTrendSignal, redditSignal (saves ~30% output tokens per trend)
@@ -1707,20 +1768,39 @@ NICHE: ${scanNiche} | AUDIENCE: ${audience||'General'} | PLATFORMS: ${platforms.
 ${extra?'CONTEXT: '+extra:''}
 LIVE TIKTOK DATA:
 ${videoCtx}
+LIVE YOUTUBE DATA (real recent videos, real counts):
+${youtubeCtx}
 LIVE REDDIT DATA:
 ${redditCtx}
 POSTING TIMES: ${postingTimeData||'Use best knowledge.'}
 GOOGLE TRENDS SIGNALS: ${googleSignal||'Not available.'}
 Return ONLY valid JSON — no markdown, no explanation:
 {"summary":{"totalTrends":5,"hotTopics":2,"avgEngagement":"4.2%","bestDay":"Tuesday","bestTimeOverall":"6-8 PM EST","liveVideosPulled":${tiktokVideos.length}},"trends":[{"id":"t1","rank":1,"title":"Specific trend title","hook":"Why trending + winning angle (2 sentences)","platform":"TikTok","format":"Short video","heat":"viral","engagementRate":"6.8%","searchVolume":"High","competition":"Medium","bestTimeToPost":"Tue & Thu 6-8 PM EST","hashtags":["#tag1","#tag2","#tag3","#tag4","#tag5"],"contentAngles":["Angle 1","Angle 2","Angle 3"],"captionHook":"First line that stops the scroll","dataSource":"tiktok_live"}]}
-5 trends. dataSource = "tiktok_live","reddit_live","google_trends_live","instagram_ai","crossplatform_ai". heat = "rising","hot","viral".`;
+5 trends. dataSource = "tiktok_live","youtube_live","reddit_live","google_trends_live","instagram_ai","crossplatform_ai". Use "youtube_live" for any trend grounded in the LIVE YOUTUBE DATA above. heat = "rising","hot","viral".`;
 
     try {
       // FIX 2: useSearch=false — all research already done above
       const text = await claudeCall(prompt, false, 6000);
       const m = text.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(m ? m[0] : text);
-      const result = (parsed.trends||[]).map((tr,i) => ({ ...tr, id: tr.id || 't' + (i+1), realVideos: tr.dataSource==='tiktok_live' ? tiktokVideos.slice(0,4) : [], redditPosts: tr.dataSource==='reddit_live' ? redditPosts.slice(0,3) : [] }));
+      const result = (parsed.trends||[]).map((tr,i) => {
+        const out = { ...tr, id: tr.id || 't' + (i+1),
+          realVideos: tr.dataSource==='tiktok_live' ? tiktokVideos.slice(0,4) : [],
+          redditPosts: tr.dataSource==='reddit_live' ? redditPosts.slice(0,3) : [],
+          realYoutube: [] };
+        // YouTube-backed trend: attach real videos and compute Likes / view from
+        // real data (aggregate likes ÷ views), overriding the model's invented value.
+        if (tr.dataSource==='youtube_live' && youtubeVideos.length) {
+          const pool = youtubeVideos.slice(0,8);
+          out.realYoutube = pool.slice(0,4);
+          const agg = pool.reduce((a,v) => ({ likes: a.likes+v.likeCount, views: a.views+v.viewCount }), { likes:0, views:0 });
+          if (agg.views > 0) {
+            out.engagementRate = (agg.likes / agg.views * 100).toFixed(1) + '%';
+            out.engagementRateReal = true;  // flips the "est." tag off for this tile
+          }
+        }
+        return out;
+      });
       setTrends(result);
       setScanPhase('result');
     } catch (e) {
