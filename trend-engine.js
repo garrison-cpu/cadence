@@ -403,23 +403,40 @@ function scoreTrend({ stats, platform, engagementRate, crossPlatformCount,
    - TikTok         : SLOT — plug in paid history OR your own accumulation
    ===================================================================== */
 
-// --- Google Trends: ships with 5y of history. We pull recent weekly
-//     interest and write multiple points at once so momentum works on
-//     the very first scan (no waiting to accumulate).
+// --- Google Trends: ships with 5y of history. We pull recent interest for the
+//     niche term (seeded as history so first-scan momentum works) AND the rising
+//     related queries/topics as their own signals — so Google Trends yields
+//     several comparable signals instead of a single niche-level one that can
+//     never clear the niche-relative bar.
 async function googleTrendsBaseline(niche, fetchTrendSeries) {
-  // fetchTrendSeries(term) -> [{date, value0to100}]  (pytrends/Apify/SerpApi)
-  const series = await fetchTrendSeries(niche).catch(() => []);
-  if (!series.length) return { observations: [], seed: [] };
+  // fetchTrendSeries(term) -> { series:[{date,value0to100}], risingQueries:[{query,value}],
+  //   risingTopics:[{topic,value}] }.  (Back-compat: a bare array = just the series.)
+  const res = await fetchTrendSeries(niche).catch(() => null);
+  const series        = Array.isArray(res) ? res : (res?.series || []);
+  const risingQueries = Array.isArray(res) ? []  : (res?.risingQueries || []);
+  const risingTopics  = Array.isArray(res) ? []  : (res?.risingTopics || []);
 
-  const latest = series[series.length - 1];
-  // seed = historical points we can backfill into the store immediately
-  const seed = series.slice(-CONFIG.baselineWindowDays).map(p => ({
-    signal: niche, value: p.value0to100, ts: new Date(p.date).getTime(),
-  }));
-  return {
-    observations: [{ signal: niche, value: latest.value0to100 }],
-    seed,
-  };
+  const observations = [];
+  const seed = [];
+
+  // niche term: keep emitting its interest series as seeded history + a current obs
+  if (series.length) {
+    const latest = series[series.length - 1];
+    observations.push({ signal: niche, value: latest.value0to100 });
+    for (const p of series.slice(-CONFIG.baselineWindowDays)) {
+      seed.push({ signal: niche, value: p.value0to100, ts: new Date(p.date).getTime() });
+    }
+  }
+
+  // rising related queries + topics: each becomes its own signal
+  for (const q of risingQueries) {
+    if (q.query && q.value > 0) observations.push({ signal: q.query, value: q.value });
+  }
+  for (const t of risingTopics) {
+    if (t.topic && t.value > 0) observations.push({ signal: t.topic, value: t.value });
+  }
+
+  return { observations, seed };
 }
 
 // --- Reddit: pull "hot now" and "top of month" so we get current vs a
@@ -475,7 +492,10 @@ async function youtubeBaseline(niche, youtubeVideos) {
 //     (the caption), not the hashtag — so momentum tracks what people are
 //     actually saying, not just which tag they used.
 async function instagramBaseline(niche, fetchInstagram) {
-  const posts = await fetchInstagram(niche).catch(() => []);
+  const raw = await fetchInstagram(niche).catch(() => []);
+  // defensive: some actor responses wrap posts inside a hashtag object's nested
+  // `posts` array — flatten those; otherwise treat each item as a post itself.
+  const posts = raw.flatMap(p => (p && Array.isArray(p.posts)) ? p.posts : [p]);
   const observations = posts.map(p => {
     const views = p.videoViewCount ?? p.videoPlayCount ?? null;
     const likes = p.likesCount ?? 0, comments = p.commentsCount ?? 0;

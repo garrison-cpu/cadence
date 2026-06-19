@@ -207,7 +207,9 @@ async function apifyCached(cacheKey, actorId, input, ttlHours = 12) {
   const key = 'apify:' + cacheKey;
   let cached = null;
   try { cached = await store.getJSON(key); } catch {}
-  if (cached && cached.items && (Date.now() - cached.ts) < ttlHours * 3600000) {
+  // only treat a NON-EMPTY fresh cache as a hit, so a one-off empty/garbage run
+  // can't keep serving nothing for 12h.
+  if (cached && cached.items && cached.items.length && (Date.now() - cached.ts) < ttlHours * 3600000) {
     return cached.items;
   }
   try {
@@ -217,10 +219,16 @@ async function apifyCached(cacheKey, actorId, input, ttlHours = 12) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     });
-    if (!r.ok) throw new Error('Apify ' + actorId + ' HTTP ' + r.status);
+    if (!r.ok) {
+      const snippet = (await r.text().catch(() => '')).slice(0, 200);
+      console.warn(`[apify] ${actorId} HTTP ${r.status} — ${snippet}`);
+      throw new Error('Apify ' + actorId + ' HTTP ' + r.status);
+    }
     const items = await r.json();
     const arr = Array.isArray(items) ? items : [];
-    try { await store.setJSON(key, { items: arr, ts: Date.now() }); } catch {}
+    console.log(`[apify] ${actorId} returned ${arr.length} items`);
+    // cache only usable (non-empty) results so an empty run is retried next scan
+    if (arr.length) { try { await store.setJSON(key, { items: arr, ts: Date.now() }); } catch {} }
     return arr;
   } catch (e) {
     console.warn('[apify] ' + actorId + ' failed:', e.message);
@@ -260,7 +268,9 @@ async function pullTikTok(niche) {
     ]);
     const tv = trending.status === 'fulfilled' ? parseVideos(trending.value) : [];
     const sv = search.status === 'fulfilled' ? parseVideos(search.value) : [];
-    return [...sv, ...tv].slice(0, 15);
+    const out = [...sv, ...tv].slice(0, 15);
+    console.log('[scan] tiktok items:', out.length);
+    return out;
   } catch (e) {
     console.warn('[tiktok] pull failed:', e.message);
     return [];
@@ -305,19 +315,28 @@ async function fetchRedditServer(niche, window = 'week') {
       }
     } catch {}
   }
+  console.log('[scan] reddit posts:', posts.length);
   return posts;
 }
 
 // --- Instagram: live hashtag posts via Apify (cached 12h).
+// The `search`+`searchType:hashtag` mode returned hashtag-search metadata, not
+// posts. Scrape the hashtag's explore page directly so we get real post objects
+// (caption / likesCount / commentsCount / videoViewCount).
 async function fetchInstagram(niche) {
-  return apifyCached('ig:' + niche, 'apify~instagram-scraper', {
-    search: niche, searchType: 'hashtag', searchLimit: 2, resultsLimit: 30,
-    resultsType: 'posts', onlyPostsNewerThan: '14 days', addParentData: false,
+  const tag = String(niche).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const items = await apifyCached('ig:' + niche, 'apify~instagram-scraper', {
+    directUrls: ['https://www.instagram.com/explore/tags/' + tag + '/'],
+    resultsType: 'posts', resultsLimit: 30,
   }, 12);
+  console.log('[scan] instagram items:', items.length);
+  return items;
 }
 
-// --- Google Trends: live interest-over-time series via Apify (cached 12h),
-//     normalized to [{ date, value0to100 }] for the engine's history seed.
+// --- Google Trends: live data via Apify (cached 12h). Returns the niche-term
+//     interest series (for the engine's seeded history) PLUS the rising related
+//     queries/topics, which become their own signals so Google Trends yields
+//     several comparable signals instead of one.
 async function fetchTrendSeries(term) {
   const items = await apifyCached('gt:' + term, 'apify~google-trends-scraper', {
     searchTerms: [term], timeRange: 'today 1-m', geo: 'US', viewedFrom: 'us',
@@ -325,7 +344,7 @@ async function fetchTrendSeries(term) {
   }, 12);
   const rec = items[0] || {};
   const tl = rec.interestOverTime_timelineData || rec.interestOverTime || [];
-  return tl
+  const series = tl
     .filter(p => !Array.isArray(p.hasData) || p.hasData[0] !== false)
     .map(p => {
       const v = Array.isArray(p.value) ? p.value[0] : (p.value ?? p.value0to100);
@@ -334,6 +353,16 @@ async function fetchTrendSeries(term) {
       return { date, value0to100: Number(v) };
     })
     .filter(p => Number.isFinite(p.value0to100));
+
+  const risingQueries = (rec.relatedQueries_rising || [])
+    .map(q => ({ query: q.query, value: Number(q.value) || 0 }))
+    .filter(q => q.query && q.value > 0);
+  const risingTopics = (rec.relatedTopics_rising || [])
+    .map(t => ({ topic: (t.topic && t.topic.title) || '', value: Number(t.value) || 0 }))
+    .filter(t => t.topic && t.value > 0);
+
+  console.log(`[scan] google_trends series ${series.length}pts, rising ${risingQueries.length}q/${risingTopics.length}t`);
+  return { series, risingQueries, risingTopics };
 }
 
 // --- YouTube: server-side port of the /api/youtube search+videos pull used by
@@ -354,7 +383,7 @@ async function pullYouTube(niche) {
     const vr = await fetch('https://www.googleapis.com/youtube/v3/videos?' + vParams.toString());
     if (!vr.ok) return [];
     const vd = await vr.json();
-    return (vd.items || []).map(it => {
+    const out = (vd.items || []).map(it => {
       const s = it.statistics || {};
       return {
         id: it.id,
@@ -366,6 +395,8 @@ async function pullYouTube(niche) {
       };
     }).filter(v => v.viewCount > 0 || v.likeCount > 0)
       .sort((a, b) => b.viewCount - a.viewCount);
+    console.log('[scan] youtube videos:', out.length);
+    return out;
   } catch (e) {
     console.warn('[youtube] server pull failed:', e.message);
     return [];
@@ -383,6 +414,8 @@ app.post('/api/scan', async (req, res) => {
       ? platforms
       : ['tiktok', 'reddit', 'youtube', 'instagram', 'google_trends'];
 
+    console.log(`[scan] niche="${niche}" platforms=${plats.join(',')}`);
+
     const youtubeVideos = plats.includes('youtube') ? await pullYouTube(niche) : [];
 
     const result = await engine.runScan({
@@ -395,8 +428,10 @@ app.post('/api/scan', async (req, res) => {
       claudeCall: claudeCallText,
       onStatus: () => {},
     });
+    console.log(`[scan] done: ${(result.trends || []).length} themes${result.note ? ' (' + result.note + ')' : ''}`);
     res.json(result); // { trends, note? }
   } catch (e) {
+    console.error('[scan] error:', e.message);
     res.status(502).json({ error: { message: 'Scan error: ' + e.message } });
   }
 });
