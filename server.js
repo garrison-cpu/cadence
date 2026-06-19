@@ -47,6 +47,19 @@ if (!RAPID_KEY)   console.warn('⚠  RAPIDAPI_KEY is not set — /api/tokapi wil
 if (!YOUTUBE_KEY) console.warn('⚠  YOUTUBE_API_KEY is not set — /api/youtube will fail.');
 if (!APIFY_TOKEN) console.warn('⚠  APIFY_TOKEN is not set — /api/scan Google Trends + Instagram sources will be empty.');
 
+// ── Keep the server alive ───────────────────────────────────────────────────
+// Upstream calls (Anthropic, TokAPI, Reddit, YouTube, Apify) can reject outside
+// a request's try/catch (e.g. a background promise). In modern Node an unhandled
+// rejection terminates the process — which would take the whole app down. Log
+// these instead of crashing so a single bad upstream response never kills the
+// server. Per-request errors are still caught and returned in their routes.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection (kept alive):', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (kept alive):', err && err.stack ? err.stack : err);
+});
+
 app.use(express.json({ limit: '1mb' }));
 
 // ── Trend-engine history store (Replit DB-backed) ───────────────────────────
