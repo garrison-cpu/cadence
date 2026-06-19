@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.*
+*.local
+
+# Replit
+.replit
+replit.nix
+.config/
+.cache/
+.upm/
+.breakpoints
+
+# Local assets
+attached_assets/
+zipFile.zip
+
+# Claude Code local settings
+.claude/
