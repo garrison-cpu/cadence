@@ -326,30 +326,61 @@ async function fetchReddit(niche) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   ENGINE ADAPTER  — map an engine trend (Cadence decided + Claude wrote the
-   creative layer) into the exact shape the existing TrendCard already renders,
-   so the card layout never needs redesigning.
+   ENGINE ADAPTER  — map an engine THEME (Cadence scored it from real numbers,
+   Claude grouped + wrote the creative layer) into the shape the TrendCard
+   renders. A theme is topic-first: it can span several platforms, so instead of
+   one platform identity we carry an evidence list (one real number per platform)
+   and which platform has the most traction.
 
-   HONEST LABELLING: numbers from t.measured are REAL (measured by Cadence).
+   HONEST LABELLING: everything in t.measured is REAL (measured by Cadence).
    Anything from t.generated is AI-written. We only flip the "est." tag off
    (engagementRateReal:true) when measured.engagementRate actually exists.
    ════════════════════════════════════════════════════════════════════════════ */
+function platLabel(p) { return (PLAT[p] && PLAT[p].label) || (p || '').replace(/_/g, ' '); }
+
+// one compact real number per platform for the evidence chip
+function evidenceNumber(e) {
+  // Google Trends is a 0-100 index, so its momentum (delta) reads truer than the
+  // raw index value. Everything else shows its real count (views/score/likes).
+  if (e.platform === 'google_trends') {
+    return (e.deltaPct >= 0 ? '+' : '') + Math.round(e.deltaPct || 0) + '%';
+  }
+  return fmt(e.value);
+}
+
 function mapEngineTrend(t, i) {
   const m = t.measured || {};
-  const meta = t.meta || {};
-  const plat = t.platform || '';
   const erReal = m.engagementRate != null;
+  const dom = t.dominantPlatform || (t.platforms && t.platforms[0]) || '';
+  const breadth = m.breadth || (t.platforms ? t.platforms.length : 1);
+
+  // evidence chips: platform + one compact real number, clickable when we have a link
+  const evidence = (m.evidence || []).map(e => ({
+    platform: e.platform,
+    dot: (PLAT[e.platform] && PLAT[e.platform].dot) || '#2DD4BF',
+    label: platLabel(e.platform) + ' ' + evidenceNumber(e),
+    url: e.url || null,
+  }));
+
   const out = {
-    id: t.id || ('t' + (i + 1)),
-    title: t.signal,
-    platform: plat,
+    id: t.id || ('theme_' + (i + 1)),
+    title: t.title,
+    reasoning: cleanCopy(t.reasoning || ''),
+    platform: dom,                       // dominant platform for any PLAT lookups
+    dominantPlatform: dom,
+    dominantPlatformLabel: platLabel(dom),
+    breadth,
+    evidence,
+    // single-platform theme -> it's only just surfacing on one place
+    emerging: breadth <= 1,
+    emergingLabel: 'Emerging on ' + platLabel(dom),
     heat: m.heat,
     // "Why it's trending" — the AI-written angle (clearly the creative layer)
     hook: cleanCopy(t.generated?.angle || ''),
     // measured engagement (real) — formatted to a percentage, else em-dash
     engagementRate: erReal ? (m.engagementRate * 100).toFixed(1) + '%' : '—',
     engagementRateReal: erReal,          // real -> hide the "est." tag
-    // REAL momentum vs baseline (measured), not a model guess
+    // REAL momentum vs baseline (measured), from the dominant member
     delta: (m.deltaPct >= 0 ? '+' : '') + Math.round(m.deltaPct || 0) + '%',
     contentAngles: t.generated?.angle ? [cleanCopy(t.generated.angle)] : [],
     captionHook: cleanCopy(t.generated?.captionHook || ''),
@@ -358,26 +389,14 @@ function mapEngineTrend(t, i) {
     competition: '—',
     searchVolume: '—',
     bestTimeToPost: '',
+    // legacy per-platform link lists no longer populated (evidence chips replace them)
     realVideos: [],
     redditPosts: [],
     realYoutube: [],
   };
 
-  // dataSource lights the "LIVE DATA" badge for measured platforms
-  out.dataSource = plat ? plat + '_live' : 'crossplatform_ai';
-
-  // attach the real source item(s) from meta, per platform
-  if (plat === 'tiktok') {
-    out.realVideos = [{ desc: t.signal, views: m.current, likes: meta.likes, url: meta.url }];
-  } else if (plat === 'youtube') {
-    out.realYoutube = [{ title: t.signal, viewCount: m.current, likeCount: meta.likeCount, commentCount: meta.commentCount || 0, url: meta.url }];
-  } else if (plat === 'reddit') {
-    out.redditPosts = [{ subreddit: meta.subreddit, title: t.signal, score: m.current, comments: meta.comments, url: meta.url }];
-  } else if (plat === 'google_trends') {
-    out.googleTrendSignal = t.signal;
-  } else if (plat === 'instagram') {
-    out.realVideos = [{ desc: t.signal, views: m.current, likes: meta.likes, url: meta.url }];
-  }
+  // dataSource lights the "LIVE DATA" badge when a measured platform leads
+  out.dataSource = dom ? dom + '_live' : 'crossplatform_ai';
   return out;
 }
 
@@ -493,6 +512,24 @@ function HeatPill({ T, heat }) {
   return h('span', { style: { display:'inline-flex', alignItems:'center', gap:6, padding:'4px 11px', borderRadius: T.rChip, fontFamily: T.fontMono, fontSize:10.5, fontWeight:700, letterSpacing:'0.08em', background: c+'1a', color: c, textTransform:'uppercase' } },
     h('span', { style: { width:6, height:6, borderRadius:'50%', background: c, boxShadow: `0 0 0 3px ${c}33`, animation: heat==='viral'?'blink 1.4s infinite':'none' } }),
     heatLabel(heat)
+  );
+}
+
+/* Evidence chips — one real number per platform a theme shows up on. Replaces a
+   single platform identity, because a theme is topic-first and can span many. */
+function EvidenceChips({ T, evidence }) {
+  const ev = evidence || [];
+  if (!ev.length) return null;
+  return h('div', { style: { display:'flex', flexWrap:'wrap', gap: 6, alignItems:'center' } },
+    ev.map((e, i) => {
+      const inner = h('span', { style: { display:'inline-flex', alignItems:'center', gap: 6, background: T.surfaceHi, color: T.body, fontFamily: T.fontMono, fontSize: 11, fontWeight: 500, letterSpacing:'0.04em', padding:'4px 10px', borderRadius: T.rChip, border:`1px solid ${T.hairline}`, whiteSpace:'nowrap' } },
+        h('span', { style: { width:6, height:6, borderRadius:'50%', background: e.dot } }),
+        e.label
+      );
+      return e.url
+        ? h('a', { key: i, href: e.url, target:'_blank', rel:'noopener', style: { textDecoration:'none' } }, inner)
+        : h('span', { key: i }, inner);
+    })
   );
 }
 
@@ -1129,6 +1166,34 @@ function ScanScreen({ T, statusMsg, platCount }) {
   );
 }
 
+/* EMPTY — engine answered but nothing cleared the bar. Honest, not a fallback. */
+function EmptyState({ T, niche, onRescan, onBack }) {
+  return h('div', { style: { flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding: 48, gap: 16, background: T.canvas } },
+    h(Mark, { size: 40 }),
+    h('div', { style: eb(T) }, 'No trends yet'),
+    h('h2', { className: T.direction==='editorial' ? 'serif' : '', style: { fontFamily: T.direction==='editorial' ? FS : T.fontBody, fontSize: 28, fontWeight: T.direction==='editorial' ? 400 : 700, letterSpacing:'-0.02em', margin: 0, color: T.ink, textAlign:'center', maxWidth: 540, lineHeight: 1.2 } }, 'No trends cleared the bar yet. Try a broader niche or rescan soon.'),
+    niche && h('div', { style: { ...mono(T), color: T.bodyMid } }, `"${niche}"`),
+    h('div', { style: { display:'flex', gap: 10, marginTop: 8 } },
+      h('button', { onClick: onRescan, style: btnAccent(T) }, 'Rescan'),
+      h('button', { onClick: onBack, style: btnSec(T) }, 'Adjust niche')
+    )
+  );
+}
+
+/* ERROR — engine failed to answer. Retry re-runs the scan; no silent fallback. */
+function ErrorState({ T, message, niche, onRetry, onBack }) {
+  return h('div', { style: { flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding: 48, gap: 16, background: T.canvas } },
+    h('div', { style: { width: 60, height: 60, borderRadius:'50%', background: T.surfaceHi, border:`1px solid ${T.hairline}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize: 28, fontWeight: 700, color: '#F43F5E' } }, '!'),
+    h('div', { style: eb(T, '#F43F5E') }, 'Scan failed'),
+    h('h2', { className: T.direction==='editorial' ? 'serif' : '', style: { fontFamily: T.direction==='editorial' ? FS : T.fontBody, fontSize: 26, fontWeight: T.direction==='editorial' ? 400 : 700, letterSpacing:'-0.02em', margin: 0, color: T.ink, textAlign:'center', maxWidth: 540, lineHeight: 1.2 } }, 'The scan could not complete.'),
+    message && h('div', { style: { ...mono(T), color: T.bodyMid, maxWidth: 540, textAlign:'center', whiteSpace:'pre-wrap' } }, message),
+    h('div', { style: { display:'flex', gap: 10, marginTop: 8 } },
+      h('button', { onClick: onRetry, style: btnAccent(T) }, 'Retry scan'),
+      h('button', { onClick: onBack, style: btnSec(T) }, 'Back')
+    )
+  );
+}
+
 /* RESULTS — direction-aware */
 function ResultScreen({ T, t, trends, niche, savedIds, toggleSave, onBack, onOpenStudio }) {
   const [idx, setIdx] = useState(0);
@@ -1215,15 +1280,9 @@ ${STYLE}`);
     if (isEditorial) {
       return h('article', { style: { paddingBottom: 24, borderBottom:`1px solid ${T.hairline}` } },
         h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 14 } },
-          h('div', { style: { display:'flex', alignItems:'center', gap: 10, ...mono(T), color: T.ink } },
-            h('span', { style: { width:7, height:7, borderRadius:'50%', background: platBrand.dot } }),
-            (tr.platform||'').toUpperCase(),
-            h('span', { style: { color: T.mute } }, '·'),
-            (tr.format||'').toUpperCase(),
-            isLive && h(Fragment, null,
-              h('span', { style: { color: T.mute } }, '·'),
-              h('span', { className:'gt' }, 'LIVE DATA')
-            )
+          h('div', { style: { display:'flex', alignItems:'center', gap: 10, flexWrap:'wrap' } },
+            h(EvidenceChips, { T, evidence: tr.evidence }),
+            tr.emerging && h('span', { style: { ...mono(T), color: T.mute } }, tr.emergingLabel)
           ),
           h(HeatPill, { T, heat: tr.heat })
         ),
@@ -1239,7 +1298,8 @@ ${STYLE}`);
         ),
         h('div', { style: { marginBottom: 12 } },
           h('div', { style: { ...mono(T), color: T.body, marginBottom: 8 } }, 'WHY IT\'S TRENDING'),
-          h('p', { className:'serif', style: { fontSize: 22, lineHeight: 1.4, color: T.body, margin: 0, letterSpacing:'-0.005em' } }, tr.hook)
+          h('p', { className:'serif', style: { fontSize: 22, lineHeight: 1.4, color: T.body, margin: 0, letterSpacing:'-0.005em' } }, tr.hook),
+          !tr.emerging && tr.dominantPlatform && h('div', { style: { ...mono(T), color: T.bodyMid, marginTop: 8 } }, 'Most traction: ' + tr.dominantPlatformLabel)
         ),
         tr.bestTimeToPost && tr.postingTimeRationale && h('div', { style: { borderLeft:`2px solid ${T.ink}`, paddingLeft: 14, marginTop: 18 } },
           h('div', { className:'serif-i', style: { fontSize: 18, color: T.ink } }, tr.bestTimeToPost),
@@ -1256,11 +1316,9 @@ ${STYLE}`);
             h(Chip, { T, kind:'solid', color: T.ink }, 'HOT NOW'),
             isLive && h(Chip, { T, kind:'solid', color: T.accentDeep }, 'LIVE DATA')
           ),
-          h('div', { style: { display:'flex', alignItems:'center', gap: 14 } },
-            h('span', { style: { display:'flex', alignItems:'center', gap: 8 } },
-              h('span', { style: { width:9, height:9, borderRadius:'50%', background: platBrand.dot } }),
-              h('span', { className:'serif-i', style: { fontSize: 17, color: T.ink } }, (tr.platform||''), ' · ', (tr.format||''))
-            ),
+          h('div', { style: { display:'flex', alignItems:'center', gap: 14, flexWrap:'wrap', justifyContent:'flex-end' } },
+            h(EvidenceChips, { T, evidence: tr.evidence }),
+            tr.emerging && h('span', { style: { ...mono(T), color: T.mute } }, tr.emergingLabel),
             h(HeatPill, { T, heat: tr.heat })
           )
         ),
@@ -1277,7 +1335,8 @@ ${STYLE}`);
         ),
         h('div', { style: { background:`linear-gradient(105deg, ${T.g1}1a, ${T.g3}1a)`, borderRadius: 14, padding:'14px 18px' } },
           h('div', { style: { ...eb(T), marginBottom: 6 } }, 'Why it\'s trending'),
-          h('p', { style: { fontFamily: T.fontBody, fontSize: 15.5, color: T.body, lineHeight: 1.55, margin: 0 } }, tr.hook)
+          h('p', { style: { fontFamily: T.fontBody, fontSize: 15.5, color: T.body, lineHeight: 1.55, margin: 0 } }, tr.hook),
+          !tr.emerging && tr.dominantPlatform && h('div', { style: { ...mono(T), color: T.bodyMid, marginTop: 8 } }, 'Most traction: ' + tr.dominantPlatformLabel)
         ),
         tr.bestTimeToPost && tr.postingTimeRationale && h('div', { style: { display:'flex', alignItems:'flex-start', gap: 12, marginTop: 16 } },
           h('div', { style: { width: 4, alignSelf:'stretch', borderRadius: 2, background: `linear-gradient(180deg, ${T.g1}, ${T.g3})` } }),
@@ -1296,11 +1355,9 @@ ${STYLE}`);
           h(Chip, { T, kind:'solid', color: T.ink }, 'HOT NOW'),
           isLive && h(Chip, { T, kind:'solid', color: T.accentDeep }, 'LIVE DATA')
         ),
-        h('div', { style: { display:'flex', alignItems:'center', gap: 14 } },
-          h('span', { style: eb(T, T.ink) },
-            h('span', { style: { width: 8, height: 8, borderRadius:'50%', background: platBrand.dot, marginRight: 2 } }),
-            (tr.platform||'').toUpperCase(), ' · ', (tr.format||'')
-          ),
+        h('div', { style: { display:'flex', alignItems:'center', gap: 14, flexWrap:'wrap', justifyContent:'flex-end' } },
+          h(EvidenceChips, { T, evidence: tr.evidence }),
+          tr.emerging && h('span', { style: { ...mono(T), color: T.mute } }, tr.emergingLabel),
           h(HeatPill, { T, heat: tr.heat })
         )
       ),
@@ -1317,7 +1374,8 @@ ${STYLE}`);
       ),
       h('div', { style: { background: T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding:'12px 14px' } },
         h('div', { style: { ...eb(T), marginBottom: 5 } }, 'Why it\'s trending'),
-        h('p', { style: { fontFamily: T.fontBody, fontSize: 14.5, color: T.body, lineHeight: 1.55, margin: 0 } }, tr.hook)
+        h('p', { style: { fontFamily: T.fontBody, fontSize: 14.5, color: T.body, lineHeight: 1.55, margin: 0 } }, tr.hook),
+        !tr.emerging && tr.dominantPlatform && h('div', { style: { ...mono(T), color: T.bodyMid, marginTop: 8 } }, 'Most traction: ' + tr.dominantPlatformLabel)
       ),
       tr.bestTimeToPost && tr.postingTimeRationale && h('div', { style: { borderLeft:`2px solid ${T.accent}`, paddingLeft: 14, marginTop: 14 } },
         h('div', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 600, color: T.ink } }, tr.bestTimeToPost),
@@ -1753,6 +1811,7 @@ function App() {
   const [tone, setTone] = useState('educational');
   const [extra, setExtra] = useState('');
   const [trends, setTrends] = useState([]);
+  const [scanError, setScanError] = useState('');
   const [savedIds, setSavedIds] = useState(store.get('cp_saved_ids', []));
   const [studioTrend, setStudioTrend] = useState(null);
   // No App-level animation tick: leaf components (Sparkline, ScanScreen) own their
@@ -1782,6 +1841,7 @@ function App() {
     setTab('scanner');
     setScanPhase('scan');
     setTrends([]);
+    setScanError('');
 
     try {
       setStatusMsg('reading sources…');
@@ -1794,22 +1854,23 @@ function App() {
       if (!r.ok) throw new Error('scan HTTP ' + r.status);
       const data = await r.json();
       if (data.error) throw new Error(data.error.message || 'scan error');
-      const engineTrends = data.trends || [];
-      if (!engineTrends.length) throw new Error('engine returned zero trends');
-      setStatusMsg('writing angles…');
-      setTrends(engineTrends.map(mapEngineTrend));
-      setScanPhase('result');
-      return;
-    } catch (e) {
-      console.warn('[scan] engine path failed — falling back to local scan:', e.message);
-    }
 
-    // Fallback ONLY — original client-side scan.
-    try {
-      await runScanLocal(scanNiche);
+      const engineThemes = data.trends || [];
+      // Engine answered. Zero themes (or an explicit note) is an honest empty
+      // result, NOT a reason to silently fall back to the old local scan.
+      if (!engineThemes.length || data.note) {
+        setScanPhase('empty');
+        return;
+      }
+      setStatusMsg('writing angles…');
+      setTrends(engineThemes.map(mapEngineTrend));
+      setScanPhase('result');
     } catch (e) {
-      alert('Scan failed: ' + e.message);
-      setScanPhase('setup');
+      // Engine failed to answer -> honest error with a retry button. We never
+      // call runScanLocal automatically; it stays in the file as a manual escape.
+      console.warn('[scan] engine error:', e.message);
+      setScanError(e.message || 'Something went wrong.');
+      setScanPhase('error');
     }
   };
 
@@ -1976,6 +2037,8 @@ ${youtubeVideos.length ? `There ARE ${youtubeVideos.length} real YouTube videos 
           tab==='scanner' && h('div', { key:'sc', style: { flex:1, overflow:'hidden', display:'flex', flexDirection:'column' } },
             scanPhase==='setup'  && h(ScannerSetup, { T, niche, setNiche, audience, setAudience, platforms, togglePlat, formats, toggleFmt, tone, setTone, extra, setExtra, onScan: runScan }),
             scanPhase==='scan'   && h(ScanScreen, { T, statusMsg, platCount: platforms.length }),
+            scanPhase==='empty'  && h(EmptyState, { T, niche, onRescan: ()=>runScan(), onBack: ()=>setScanPhase('setup') }),
+            scanPhase==='error'  && h(ErrorState, { T, message: scanError, niche, onRetry: ()=>runScan(), onBack: ()=>setScanPhase('setup') }),
             scanPhase==='result' && h(ResultScreen, { T, trends, niche, savedIds, toggleSave, onBack: ()=>setScanPhase('setup'), onOpenStudio: (tr)=>{ setStudioTrend(tr); setTab('studio'); } })
           ),
           tab==='studio'   && h('div', { key:'st', style: { flex:1, overflow:'hidden' } }, h(StudioTab,   { T, prefillTrend: studioTrend, clearPrefill: ()=>setStudioTrend(null) })),

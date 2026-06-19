@@ -64,6 +64,16 @@ const CONFIG = {
   minObservations:   1,        // 1 = can appear on the FIRST scan via niche-relative
   maxTrendsReturned: 8,        // how many to surface per scan
 
+  // ---- Topic-first clustering ----
+  // Signals from every source are grouped into generalized themes (Claude
+  // groups, Cadence scores). A theme that shows up on more platforms earns a
+  // breadth bonus on top of its strongest member's score.
+  clustering: {
+    maxThemes: 8,                  // how many themes to surface per scan
+    breadthBonusPerPlatform: 4,    // +score for each extra platform a theme spans
+    breadthBonusCap: 12,           // breadth bonus never exceeds this
+  },
+
   // ---- Adaptive baseline blend (this is the cold-start fix) ----
   // How "normal" is measured as a niche accumulates history:
   //   thin history -> lean on niche-relative (this scan's own spread)
@@ -561,12 +571,151 @@ async function detectTrends(store, niche, perPlatform) {
     }
   }
 
-  // 8d. rank by score, de-dupe by signal, return top N
+  // 8d. rank by score, de-dupe by signal. Return ALL qualifying signals (no
+  //     slice): clustering needs the full set so it can group across platforms.
   const seen = new Set();
   return candidates
     .sort((a, b) => b.measured.score - a.measured.score)
-    .filter(c => { const k = signalKey(c.signal); if (seen.has(k)) return false; seen.add(k); return true; })
-    .slice(0, CONFIG.maxTrendsReturned);
+    .filter(c => { const k = signalKey(c.signal); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+
+/* =====================================================================
+   8e. CLUSTER SIGNALS  —  Claude groups, never scores
+   ---------------------------------------------------------------------
+   Topic-first: the raw scored signals (across every platform) are handed
+   to Claude, which groups ones that are about the same underlying thing
+   into generalized, platform-agnostic themes. Claude returns ONLY a
+   grouping (indices + a title + reasoning), never a number. Any signal it
+   leaves unassigned becomes its own single-member theme so nothing is lost.
+   ===================================================================== */
+async function clusterSignals(claudeCall, niche, scoredSignals) {
+  const signals = scoredSignals || [];
+  if (signals.length === 0) return [];
+
+  // every signal becomes its own theme — used as the cold fallback and to
+  // catch any signal Claude doesn't assign.
+  const soloTheme = (s) => ({
+    title: s.signal,
+    reasoning: 'Single signal.',
+    members: [s],
+  });
+
+  // one signal -> nothing to cluster
+  if (signals.length === 1) return [soloTheme(signals[0])];
+
+  const list = signals
+    .map((s, i) => `${i + 1}. [${s.platform}] ${s.signal}`)
+    .join('\n');
+
+  const prompt =
+`These are raw signals observed across platforms for the niche "${niche}". Group them into distinct trends. Two signals belong to the same trend if they are about the same underlying thing, even if worded differently or on different platforms. Some trends live on one platform only — that is fine, keep them as their own group. Give each group a short, generalized, platform-agnostic title and one sentence on why these belong together.
+
+SIGNALS:
+${list}
+
+Return ONLY JSON: {"themes":[{"title":"...","reasoning":"...","members":[<indices>]}]}
+Do not output any numbers, percentages, or metrics.`;
+
+  let parsed;
+  try {
+    const text = await claudeCall(prompt, false);
+    const m = text.match(/\{[\s\S]*\}/);
+    parsed = JSON.parse(m ? m[0] : text);
+  } catch (e) {
+    // grouping failed -> every signal stands on its own (never drop a signal)
+    return signals.map(soloTheme);
+  }
+
+  const themes = [];
+  const assigned = new Set();
+  for (const th of (parsed.themes || [])) {
+    const members = [];
+    for (const raw of (th.members || [])) {
+      const idx = Number(raw) - 1;                 // prompt is 1-based
+      if (!Number.isInteger(idx) || idx < 0 || idx >= signals.length) continue;
+      if (assigned.has(idx)) continue;             // a signal lands in one theme
+      assigned.add(idx);
+      members.push(signals[idx]);
+    }
+    if (!members.length) continue;
+    themes.push({
+      title: deepClean(String(th.title || members[0].signal)),
+      reasoning: deepClean(String(th.reasoning || '')),
+      members,
+    });
+  }
+
+  // any signal Claude left out becomes its own theme
+  signals.forEach((s, i) => { if (!assigned.has(i)) themes.push(soloTheme(s)); });
+
+  return themes;
+}
+
+
+/* =====================================================================
+   8f. AGGREGATE THEMES  —  Cadence scores the themes (no Claude)
+   ---------------------------------------------------------------------
+   Every number here comes from the members' MEASURED stats. A theme's
+   score is its strongest member plus a breadth bonus for spanning more
+   platforms. Heat is derived from that score via CONFIG.heat.
+   ===================================================================== */
+function aggregateThemes(themesWithMembers) {
+  const heatFor = (score) =>
+    score >= CONFIG.heat.viral ? 'viral' :
+    score >= CONFIG.heat.hot   ? 'hot'   : 'rising';
+
+  const C = CONFIG.clustering;
+
+  const themes = (themesWithMembers || []).map((theme, ti) => {
+    const members = theme.members || [];
+    // strongest member overall = the dominant signal
+    const dominant = members.reduce((best, m) =>
+      (!best || m.measured.score > best.measured.score) ? m : best, null);
+
+    const platforms = [...new Set(members.map(m => m.platform))];
+    const breadth = platforms.length;
+
+    const bestScore = members.reduce((mx, m) => Math.max(mx, m.measured.score), 0);
+    const breadthBonus = Math.min(C.breadthBonusCap, (breadth - 1) * C.breadthBonusPerPlatform);
+    const score = Math.min(100, Math.round(bestScore + breadthBonus));
+
+    // evidence: the strongest member ON EACH platform (one chip per platform)
+    const evidence = platforms.map(p => {
+      const top = members
+        .filter(m => m.platform === p)
+        .reduce((best, m) => (!best || m.measured.score > best.measured.score) ? m : best, null);
+      return {
+        platform: p,
+        value: top.measured.current,
+        engagementRate: top.measured.engagementRate ?? null,
+        deltaPct: top.measured.deltaPct,
+        url: top.meta?.url || null,
+      };
+    }).sort((a, b) => b.value - a.value);
+
+    return {
+      id: 'theme_' + (ti + 1),
+      title: theme.title,
+      reasoning: theme.reasoning || '',
+      platforms,
+      dominantPlatform: dominant ? dominant.platform : (platforms[0] || ''),
+      measured: {
+        score,
+        heat: heatFor(score),
+        deltaPct: dominant ? dominant.measured.deltaPct : 0,            // real, from dominant member
+        engagementRate: dominant ? (dominant.measured.engagementRate ?? null) : null,
+        breadth,
+        evidence,
+        basis: dominant ? dominant.measured.basis : null,
+      },
+      meta: {},
+    };
+  });
+
+  return themes
+    .sort((a, b) => b.measured.score - a.measured.score)
+    .slice(0, C.maxThemes);
 }
 
 
@@ -578,9 +727,11 @@ async function detectTrends(store, niche, perPlatform) {
    not produce a single statistic. One job per call (your token lesson).
    ===================================================================== */
 async function explainTrendsWithClaude(claudeCall, niche, audience, trends) {
+  // `trends` are now THEMES. We pass each theme's title + where it has the most
+  // traction (dominantPlatform), and nothing numeric, so Claude can't echo a
+  // statistic into the copy.
   const list = trends.map((t, i) =>
-    `${i + 1}. "${t.signal}" [${t.platform}] — ${t.measured.heat.toUpperCase()}, ` +
-    `${t.measured.deltaPct >= 0 ? '+' : ''}${t.measured.deltaPct}% vs baseline`
+    `${i + 1}. "${t.title}" (most traction on ${t.dominantPlatform || 'unknown'})`
   ).join('\n');
 
   const prompt =
@@ -591,6 +742,10 @@ For each, write only the creative layer.
 NICHE: ${niche} | AUDIENCE: ${audience || 'general'}
 CONFIRMED TRENDS:
 ${list}
+
+The angle may note where the trend has the most traction, but ONLY using the platform named for that trend above. Do not invent or mention any other platform.
+
+The creative layer must contain NO statistics of any kind: no percentages, no counts, no ratios, no +X% figures. Those numbers appear on the card. The only digits allowed are ones inside the trend's own title.
 
 ${STYLE}
 
@@ -662,15 +817,24 @@ async function runScan(opts) {
 
   await Promise.allSettled(jobs);
 
-  // Cadence decides what's a trend (no Claude)
+  // Cadence scores every signal from real numbers (no Claude)
   onStatus('scoring momentum…');
-  const trends = await detectTrends(store, niche, perPlatform);
+  const signals = await detectTrends(store, niche, perPlatform);
 
-  if (trends.length === 0) return { trends: [], note: 'No signals cleared the bar this scan.' };
+  if (signals.length === 0) return { trends: [], note: 'No signals cleared the bar this scan.' };
 
-  // Claude writes only the creative layer
+  // Claude groups signals into generalized themes (grouping only, no numbers)
+  onStatus('clustering themes…');
+  const clustered = await clusterSignals(claudeCall, niche, signals);
+
+  // Cadence scores + ranks the themes from their members' real numbers
+  const themes = aggregateThemes(clustered);
+
+  if (themes.length === 0) return { trends: [], note: 'No signals cleared the bar this scan.' };
+
+  // Claude writes only the creative layer for each theme
   onStatus('writing angles…');
-  const enriched = await explainTrendsWithClaude(claudeCall, niche, audience, trends);
+  const enriched = await explainTrendsWithClaude(claudeCall, niche, audience, themes);
 
   return { trends: enriched };
 }
@@ -687,7 +851,8 @@ module.exports = {
   computeSignalStats, scoreTrend,
   googleTrendsBaseline, redditBaseline, tiktokBaseline,
   youtubeBaseline, instagramBaseline,
-  detectTrends, explainTrendsWithClaude, runScan,
+  detectTrends, clusterSignals, aggregateThemes,
+  explainTrendsWithClaude, runScan,
 };
 
 
