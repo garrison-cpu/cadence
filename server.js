@@ -349,28 +349,31 @@ async function fetchInstagram(niche) {
 //     queries/topics, which become their own signals so Google Trends yields
 //     several comparable signals instead of one.
 async function fetchTrendSeries(term) {
-  const items = await apifyCached('gt:' + term, 'apify~google-trends-scraper', {
-    searchTerms: [term], timeRange: 'today 1-m', geo: 'US', viewedFrom: 'us',
-    isMultiple: false, skipDebugScreen: false,
+  // steadyfetch~google-trends-scraper returns an ARRAY of records, each tagged
+  // by a `surface` field (interestOverTime / relatedQueries / interestByRegion).
+  // (The old apify~google-trends-scraper timed out at ~10min with 408/502.)
+  const items = await apifyCached('gt:' + term, 'steadyfetch~google-trends-scraper', {
+    searchTerms: [term], geo: 'US', timeRange: 'today 1-m',
+    compare: false, includeTrendingNow: false,
   }, 12);
-  const rec = items[0] || {};
-  const tl = rec.interestOverTime_timelineData || rec.interestOverTime || [];
-  const series = tl
-    .filter(p => !Array.isArray(p.hasData) || p.hasData[0] !== false)
-    .map(p => {
-      const v = Array.isArray(p.value) ? p.value[0] : (p.value ?? p.value0to100);
-      const date = p.formattedAxisTime || p.formattedTime
-        || (p.time ? new Date(Number(p.time) * 1000).toISOString().slice(0, 10) : p.date);
-      return { date, value0to100: Number(v) };
-    })
+
+  const records = Array.isArray(items) ? items : [];
+  const iot = records.find(r => r && r.surface === 'interestOverTime');
+  const relQ = records.find(r => r && r.surface === 'relatedQueries');
+
+  // Timeline points live at record.data.points = [{ date, value, isPartial }].
+  // Drop the partial point (today's incomplete bucket). Missing record -> [].
+  const series = ((iot && iot.data && iot.data.points) || [])
+    .filter(p => p && p.isPartial !== true)
+    .map(p => ({ date: p.date, value0to100: Number(p.value) }))
     .filter(p => Number.isFinite(p.value0to100));
 
-  const risingQueries = (rec.relatedQueries_rising || [])
+  // Rising queries live at record.data.rising = [{ query, value, ... }].
+  const risingQueries = ((relQ && relQ.data && relQ.data.rising) || [])
     .map(q => ({ query: q.query, value: Number(q.value) || 0 }))
     .filter(q => q.query && q.value > 0);
-  const risingTopics = (rec.relatedTopics_rising || [])
-    .map(t => ({ topic: (t.topic && t.topic.title) || '', value: Number(t.value) || 0 }))
-    .filter(t => t.topic && t.value > 0);
+  // This actor exposes no related-topics surface; keep the field for back-compat.
+  const risingTopics = [];
 
   console.log(`[scan] google_trends series ${series.length}pts, rising ${risingQueries.length}q/${risingTopics.length}t`);
   return { series, risingQueries, risingTopics };
