@@ -245,7 +245,14 @@ async function tokGet(p) {
   });
   console.log('[tiktok] tokGet status', r.status, 'for', p);
   if (!r.ok) throw new Error('TokAPI ' + r.status);
-  return r.json();
+  const body = await r.json();
+  // tokapi returns HTTP 200 even on logical failures (e.g. {"status_code":5,
+  // "status_msg":"Invalid parameters"}). Surface these instead of silently
+  // yielding zero videos.
+  if (body && body.status_code) {
+    throw new Error('TokAPI logical error ' + body.status_code + ': ' + (body.message || body.status_msg || ''));
+  }
+  return body;
 }
 function parseVideos(raw) {
   let items = [];
