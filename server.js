@@ -250,10 +250,12 @@ async function tokGet(p) {
 function parseVideos(raw) {
   let items = [];
   if (Array.isArray(raw)) items = raw;
-  else if (raw?.aweme_list) items = raw.aweme_list;
+  // tokapi /v1/search/post returns results under search_item_list[].aweme_info
+  else if (raw?.search_item_list) items = raw.search_item_list.map(i => i.aweme_info || i);
+  else if (raw?.aweme_list?.length) items = raw.aweme_list;
   else if (raw?.data?.aweme_list) items = raw.data.aweme_list;
   else if (raw?.data?.video_list) items = raw.data.video_list;
-  return items.slice(0, 8).map(v => {
+  return items.slice(0, 15).map(v => {
     const s = v.statistics || v.stats || {};
     return {
       desc: (v.desc || '').substring(0, 90),
@@ -268,7 +270,7 @@ async function pullTikTok(niche) {
   // trips the limiter (429/403). Use a SINGLE niche-relevant search call.
   let search;
   try {
-    search = await tokGet('/v1/search/video?keyword=' + encodeURIComponent(niche) + '&count=15&offset=0');
+    search = await tokGet('/v1/search/post?keyword=' + encodeURIComponent(niche) + '&count=15&offset=0');
   } catch (e) {
     console.error('[tiktok] pullTikTok FAILED:', e && e.message);
     console.warn('[tiktok] pull failed:', e.message);
