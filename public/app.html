@@ -376,7 +376,7 @@ function mapEngineTrend(t, i) {
     emergingLabel: 'Emerging on ' + platLabel(dom),
     heat: m.heat,
     // "Why it's trending" — the AI-written angle (clearly the creative layer)
-    hook: cleanCopy(t.generated?.angle || ''),
+    hook: cleanCopy(t.generated?.whyTrending || t.generated?.angle || ''),
     // measured engagement (real) — formatted to a percentage, else em-dash
     engagementRate: erReal ? (m.engagementRate * 100).toFixed(1) + '%' : '—',
     engagementRateReal: erReal,          // real -> hide the "est." tag
@@ -1851,7 +1851,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ niche: scanNiche, audience, platforms })
+        body: JSON.stringify({ niche: scanNiche, audience, platforms, formats, tone, extra, profile: store.get('cp_brand_profile', null) })
       });
       if (!r.ok) throw new Error('scan HTTP ' + r.status);
       const data = await r.json();

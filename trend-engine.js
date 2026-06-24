@@ -751,46 +751,90 @@ function aggregateThemes(themesWithMembers) {
    Claude only for the creative layer. It does not pick trends and does
    not produce a single statistic. One job per call (your token lesson).
    ===================================================================== */
-async function explainTrendsWithClaude(claudeCall, niche, audience, trends) {
-  // `trends` are now THEMES. We pass each theme's title + where it has the most
-  // traction (dominantPlatform), and nothing numeric, so Claude can't echo a
-  // statistic into the copy.
+async function explainTrendsWithClaude(claudeCall, ctx, trends) {
+  const { niche, audience, tone = '', formats = [], extra = '', profile = null } = ctx || {};
+
+  const TONE_INTENT = {
+    educational:   'the viewer comes away knowing something they can actually use',
+    entertaining:  'the viewer keeps watching for the payoff, not for a lesson',
+    inspirational: 'the viewer wants the look or the life the content shows',
+    controversial: 'the viewer feels challenged and wants to react, agree, or argue',
+    'behind-scenes': 'the viewer feels let in on the real, unpolished process',
+    promotional:   'the viewer ends up wanting the brand or product, without feeling sold to',
+  };
+
+  const humanize = (k) => String(k).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').toLowerCase();
+  const hasProfile = profile && typeof profile === 'object' &&
+    Object.values(profile).some(v => (typeof v === 'string' ? v.trim() : v));
+
+  const brandLines = [];
+  if (hasProfile) {
+    for (const [k, v] of Object.entries(profile)) {
+      const val = typeof v === 'string' ? v.trim() : v;
+      if (!val) continue;
+      brandLines.push('- ' + humanize(k) + ': ' + (typeof val === 'object' ? JSON.stringify(val) : val));
+    }
+  }
+  if (extra && extra.trim()) brandLines.push('- one-off note for this scan: ' + extra.trim());
+
+  const primaryFormat = formats[0] || 'Reels/Video';
+  const toneIntent = TONE_INTENT[tone] || 'the content lands in a natural, confident social voice';
+  const effAudience = (audience && audience.trim()) || (profile && profile.audience) || 'general';
+
+  const personaLine = hasProfile
+    ? 'You are the social strategist for a specific brand.'
+    : 'You are an expert social media strategist.';
+  const tailoredTo = hasProfile ? 'this brand' : 'this niche and audience';
+  const hookVoice = hasProfile ? "the brand's voice" : 'a voice that fits the niche and audience';
+  const tagFit = hasProfile ? 'tags that fit the brand' : 'tags that fit the niche and audience';
+  const productClause = hasProfile
+    ? " Show how this brand's actual product shows up inside the trend, not just the brand name in passing. If the product genuinely cannot appear in this trend, give the way the brand still participates, or say plainly that it is a weak fit."
+    : '';
+
+  const contextBlock = brandLines.length
+    ? (hasProfile ? 'BRAND CONTEXT:\n' : 'EXTRA CONTEXT:\n') + brandLines.join('\n') + '\n'
+    : '';
+
   const list = trends.map((t, i) =>
     `${i + 1}. "${t.title}" (most traction on ${t.dominantPlatform || 'unknown'})`
   ).join('\n');
 
   const prompt =
-`You are a social strategist. These trends are ALREADY CONFIRMED with real data.
-Do NOT add, change, or invent any numbers, percentages, or heat levels.
-For each, write only the creative layer.
+`${personaLine} These trends are ALREADY CONFIRMED with real data. Do NOT add, change, or invent any numbers, percentages, or heat levels. For each trend, write only the creative layer, tailored to ${tailoredTo}.
 
-NICHE: ${niche} | AUDIENCE: ${audience || 'general'}
-CONFIRMED TRENDS:
+NICHE: ${niche}
+AUDIENCE: ${effAudience}
+TARGET FORMAT: ${primaryFormat}${formats.length > 1 ? ' (primary; others selected: ' + formats.slice(1).join(', ') + ')' : ''}
+TONE GOAL: ${tone || 'natural'} — the aim is that ${toneIntent}. Treat this as a goal to reach, not a formula to follow. Work out fresh, for each individual trend, how that goal best lands for THAT trend given what is actually making it move. Do not apply one fixed approach across all of them.
+${contextBlock}
+CONFIRMED TRENDS (write exactly one item per trend, in this same order):
 ${list}
+
+For each confirmed trend, produce two DISTINCT things:
+- "whyTrending": 1-2 sentences explaining objectively why this trend is moving in the niche right now. Neutral and niche-level. Do NOT mention the brand, the tone, or the format here.
+- "angle": how to execute the trend, in 1-2 sentences, visibly different from whyTrending. It must speak to the AUDIENCE, reach the TONE GOAL in a way specific to this trend, and be genuinely built for the ${primaryFormat} format, with the specifics driven by the trend, not a generic format recipe.${productClause}
+- "captionHook": the first line that stops the scroll, in ${hookVoice}.
+- "hashtags": exactly 5, mixing niche tags, format-relevant tags, and ${tagFit}.
+
+VARIETY: across the trends, vary your approach. Different entry points, structures, and mechanics. No two angles should share the same opening move or sentence shape. The difference between angles should come from each trend itself, not a repeated template.
 
 The angle may note where the trend has the most traction, but ONLY using the platform named for that trend above. Do not invent or mention any other platform.
 
-The creative layer must contain NO statistics of any kind: no percentages, no counts, no ratios, no +X% figures. Those numbers appear on the card. The only digits allowed are ones inside the trend's own title.
+The creative layer must contain NO statistics of any kind: no percentages, counts, ratios, or +X% figures. The only digits allowed are ones inside the trend's own title.
 
 ${STYLE}
 
 Return ONLY valid JSON, same order:
-{"items":[{"angle":"the winning angle in 1-2 sentences","captionHook":"first line that stops the scroll","hashtags":["#a","#b","#c","#d","#e"]}]}`;
+{"items":[{"whyTrending":"...","angle":"...","captionHook":"...","hashtags":["#a","#b","#c","#d","#e"]}]}`;
 
-  const text = await claudeCall(prompt, false); // no web search needed -> faster
+  const text = await claudeCall(prompt, false);
   const m = text.match(/\{[\s\S]*\}/);
   const parsed = JSON.parse(m ? m[0] : text);
-
-  // sanitize the AI creative layer so Ideas/Calendar entries saved from these
-  // trends are clean too (no em/en dash, no emoji)
   const items = deepClean(parsed.items || []);
 
-  // merge creative layer onto measured trends, tagging what's generated
   return trends.map((t, i) => ({
     ...t,
-    generated: items[i]
-      ? { ...items[i], _label: 'AI-written' }
-      : null,
+    generated: items[i] ? { ...items[i], _label: 'AI-written' } : null,
   }));
 }
 
@@ -804,6 +848,7 @@ Return ONLY valid JSON, same order:
 async function runScan(opts) {
   const {
     store, niche, audience, platforms,
+    formats = [], tone = '', extra = '', profile = null,
     tiktokVideos = [],          // from existing parseVideos()
     fetchReddit,                // from existing app
     fetchTrendSeries,           // pytrends/Apify/SerpApi wrapper (free baseline)
@@ -859,7 +904,7 @@ async function runScan(opts) {
 
   // Claude writes only the creative layer for each theme
   onStatus('writing angles…');
-  const enriched = await explainTrendsWithClaude(claudeCall, niche, audience, themes);
+  const enriched = await explainTrendsWithClaude(claudeCall, { niche, audience, tone, formats, extra, profile }, themes);
 
   // Niche-level Search Interest from Google Trends (most recent non-partial point,
   // 0-100). Same value for every theme in this scan — it's a niche property, not a

@@ -420,7 +420,7 @@ async function pullYouTube(niche) {
 // ── Scan: Cadence decides the trends, Claude writes the creative layer ───────
 app.post('/api/scan', async (req, res) => {
   try {
-    const { niche, audience, platforms } = req.body || {};
+    const { niche, audience, platforms, formats, tone, extra, profile } = req.body || {};
     if (!niche || !String(niche).trim()) {
       return res.status(400).json({ error: { message: 'Missing niche.' } });
     }
@@ -434,6 +434,7 @@ app.post('/api/scan', async (req, res) => {
 
     const result = await engine.runScan({
       store, niche, audience, platforms: plats,
+      formats, tone, extra, profile,
       tiktokVideos: plats.includes('tiktok') ? await pullTikTok(niche) : [],
       fetchReddit: fetchRedditServer,
       fetchTrendSeries,
