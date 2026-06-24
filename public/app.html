@@ -281,7 +281,34 @@ function parseVideos(raw) {
   else if (raw?.aweme_list) items = raw.aweme_list;
   else if (raw?.data?.aweme_list) items = raw.data.aweme_list;
   else if (raw?.data?.video_list) items = raw.data.video_list;
-  return items.slice(0,8).map(v => { const s = v.statistics||v.stats||{}; return { id: v.aweme_id||'', desc:(v.desc||'').substring(0,90), views: s.play_count||s.views||0, likes: s.digg_count||s.likes||0, author: v.author?.nickname||'', url: v.aweme_id ? `https://www.tiktok.com/@${v.author?.unique_id||'tiktok'}/video/${v.aweme_id}` : null }; }).filter(v => v.views>0 || v.likes>0);
+  return items.slice(0,8).map(v => { const s = v.statistics||v.stats||{}; return { id: v.aweme_id||'', desc:(v.desc||'').substring(0,90), views: s.play_count||s.views||0, likes: s.digg_count||s.likes||0, author: v.author?.nickname||'', createTime: v.create_time || v.createTime || 0, url: v.aweme_id ? `https://www.tiktok.com/@${v.author?.unique_id||'tiktok'}/video/${v.aweme_id}` : null }; }).filter(v => v.views>0 || v.likes>0);
+}
+function computeBestTime(timestampsMs) {
+  const ts = timestampsMs.filter(n => Number.isFinite(n) && n > 0);
+  if (ts.length < 3) return null;
+  const dates = ts.map(n => new Date(n));
+  const hourCounts = new Array(24).fill(0);
+  dates.forEach(d => hourCounts[d.getHours()]++);
+  let bestStart = 0, bestSum = -1;
+  for (let h = 0; h < 24; h++) {
+    const sum = hourCounts[h] + hourCounts[(h + 1) % 24];
+    if (sum > bestSum) { bestSum = sum; bestStart = h; }
+  }
+  const endH = (bestStart + 2) % 24;
+  const dayCounts = new Array(7).fill(0);
+  dates.forEach(d => dayCounts[d.getDay()]++);
+  const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const ranked = dayCounts.map((c, i) => ({ c, i })).sort((a, b) => b.c - a.c);
+  const topDays = [];
+  if (ranked[0].c / ts.length >= 0.34) topDays.push(DAYS[ranked[0].i]);
+  if (ranked[1] && ranked[1].c === ranked[0].c && topDays.length) topDays.push(DAYS[ranked[1].i]);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'your local time';
+  const fmtH = h => { const ap = h < 12 ? 'AM' : 'PM'; const hr = h % 12 === 0 ? 12 : h % 12; return hr + ' ' + ap; };
+  const dayStr = topDays.length ? topDays.join(' & ') + ', ' : '';
+  return {
+    label: `${dayStr}${fmtH(bestStart)}–${fmtH(endH)}`,
+    rationale: `When the ${ts.length} top posts in this niche went live (shown in ${tz}).`
+  };
 }
 async function claudeCall(prompt, useSearch=false, maxTokens=4000) {
   // Proxied: the server holds the Claude key and forwards to Anthropic.
@@ -929,7 +956,8 @@ function ResultScreen({ T, isMobile, t, trends, niche, savedIds, toggleSave, onB
     // Search interest is a real measured Google Trends value (Low/Medium/High).
     // Only show the tile when we have one this scan — never render a placeholder.
     ...(tr.searchInterestLabel ? [['Search interest', tr.searchInterestLabel, true]] : []),
-    ['Best time',    tr.bestTimeToPost||'—', false],
+    // Best time is computed from real post timestamps; only render when real.
+    ...(tr.bestTimeToPostReal ? [['Best time', tr.bestTimeToPost, true]] : []),
   ];
   const EstTag = () => h('span', { style: { fontFamily: T.fontMono, fontSize: 9, letterSpacing:'0.07em', color: T.mute, border:`1px solid ${T.hairline}`, borderRadius: 4, padding:'0 4px', marginLeft: 6, textTransform:'uppercase', verticalAlign:'middle' } }, 'est.');
   const isLive = tr.dataSource==='tiktok_live' || tr.dataSource==='youtube_live';
@@ -1555,6 +1583,7 @@ function App() {
                   viewCount: parseInt(s.viewCount, 10) || 0,
                   likeCount: parseInt(s.likeCount, 10) || 0,
                   commentCount: parseInt(s.commentCount, 10) || 0,
+                  publishedAt: it.snippet?.publishedAt || '',
                   url: it.id ? 'https://www.youtube.com/watch?v=' + it.id : null,
                 };
               }).filter(v => v.viewCount > 0 || v.likeCount > 0)
@@ -1627,7 +1656,7 @@ ${redditCtx}
 POSTING TIMES: ${postingTimeData||'Use best knowledge.'}
 GOOGLE TRENDS SIGNALS: ${googleSignal||'Not available.'}
 Return ONLY valid JSON — no markdown, no explanation:
-{"summary":{"totalTrends":5,"hotTopics":2,"avgEngagement":"4.2%","bestDay":"Tuesday","bestTimeOverall":"6-8 PM EST","liveVideosPulled":${tiktokVideos.length}},"trends":[{"id":"t1","rank":1,"title":"Specific trend title","hook":"Why trending + winning angle (2 sentences)","platform":"TikTok","format":"Short video","heat":"viral","engagementRate":"6.8%","searchVolume":"High","competition":"Medium","bestTimeToPost":"Tue & Thu 6-8 PM EST","hashtags":["#tag1","#tag2","#tag3","#tag4","#tag5"],"contentAngles":["Angle 1","Angle 2","Angle 3"],"captionHook":"First line that stops the scroll","dataSource":"tiktok_live"}]}
+{"summary":{"totalTrends":5,"hotTopics":2,"avgEngagement":"4.2%","bestDay":"Tuesday","bestTimeOverall":"6-8 PM EST","liveVideosPulled":${tiktokVideos.length}},"trends":[{"id":"t1","rank":1,"title":"Specific trend title","hook":"Why trending + winning angle (2 sentences)","platform":"TikTok","format":"Short video","heat":"viral","engagementRate":"6.8%","searchVolume":"High","competition":"Medium","hashtags":["#tag1","#tag2","#tag3","#tag4","#tag5"],"contentAngles":["Angle 1","Angle 2","Angle 3"],"captionHook":"First line that stops the scroll","dataSource":"tiktok_live"}]}
 5 trends. heat = "rising","hot","viral".
 Set each trend's "dataSource" to the live block it is actually drawn from: tiktok_live (from LIVE TIKTOK DATA), youtube_live (from LIVE YOUTUBE DATA), reddit_live (from LIVE REDDIT DATA), google_trends_live (from GOOGLE TRENDS SIGNALS); use instagram_ai or crossplatform_ai only for trends not grounded in any live block above. Do NOT default everything to tiktok_live.
 ${youtubeVideos.length ? `There ARE ${youtubeVideos.length} real YouTube videos above — ground at least ${Math.min(2, youtubeVideos.length)} trend(s) in them and mark those with "dataSource":"youtube_live" and "platform":"YouTube".` : ''}`;
@@ -1652,6 +1681,21 @@ ${youtubeVideos.length ? `There ARE ${youtubeVideos.length} real YouTube videos 
             out.engagementRate = (agg.likes / agg.views * 100).toFixed(1) + '%';
             out.engagementRateReal = true;  // flips the "est." tag off for this tile
           }
+        }
+        // Best time to post: computed from the publish timestamps of the real
+        // posts backing this trend. Honest-labelled — if we can't compute it, the
+        // tile won't render (see bestTimeToPostReal gate). Never fabricate.
+        const tsPool =
+          tr.dataSource === 'tiktok_live'  ? (out.realVideos || []).map(v => (v.createTime || 0) * 1000) :
+          tr.dataSource === 'youtube_live' ? (out.realYoutube || []).map(v => Date.parse(v.publishedAt || '') || 0) :
+          [];
+        const bt = computeBestTime(tsPool);
+        if (bt) {
+          out.bestTimeToPost = bt.label;
+          out.bestTimeToPostReal = true;
+          out.postingTimeRationale = bt.rationale;
+        } else {
+          out.bestTimeToPostReal = false;
         }
         return out;
       });

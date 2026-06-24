@@ -268,6 +268,7 @@ function parseVideos(raw) {
       desc: (v.desc || '').substring(0, 90),
       views: s.play_count || s.views || 0,
       likes: s.digg_count || s.likes || 0,
+      createTime: v.create_time || v.createTime || 0,
     };
   }).filter(v => v.views > 0 || v.likes > 0);
 }
