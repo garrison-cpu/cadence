@@ -273,11 +273,14 @@ async function tokGet(path) {
   // Proxied: the server attaches the RapidAPI key. No key in the browser.
   const r = await fetch('/api/tokapi' + path, { credentials: 'same-origin' });
   if (!r.ok) throw new Error('TokAPI ' + r.status);
-  return r.json();
+  const data = await r.json();
+  if (data && data.status_code != null && data.status_code !== 0) throw new Error('TokAPI logical error status_code=' + data.status_code);
+  return data;
 }
 function parseVideos(raw) {
   let items = [];
   if (Array.isArray(raw)) items = raw;
+  else if (raw?.search_item_list) items = raw.search_item_list.map(i => i.aweme_info || i);
   else if (raw?.aweme_list) items = raw.aweme_list;
   else if (raw?.data?.aweme_list) items = raw.data.aweme_list;
   else if (raw?.data?.video_list) items = raw.data.video_list;
@@ -1544,13 +1547,8 @@ function App() {
     if (platforms.includes('tiktok')) {
       try {
         setStatusMsg('pulling tiktok data…');
-        const [trending, search] = await Promise.allSettled([
-          tokGet('/v1/feed/recommended?pull_type=0&region=US&count=20'),
-          tokGet('/v1/search/video?keyword=' + encodeURIComponent(scanNiche) + '&count=15&offset=0')
-        ]);
-        const tv = trending.status==='fulfilled' ? parseVideos(trending.value) : [];
-        const sv = search.status==='fulfilled' ? parseVideos(search.value) : [];
-        tiktokVideos = [...sv, ...tv].slice(0, 15);
+        const search = await tokGet('/v1/search/post?keyword=' + encodeURIComponent(scanNiche) + '&count=15&offset=0');
+        tiktokVideos = parseVideos(search).slice(0, 15);
       } catch (e) { console.warn('TikTok:', e.message); }
     }
 
