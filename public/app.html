@@ -27,11 +27,18 @@
   .serif { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; }
 
   /* ──────────────────────────────────────────────────────────────────────
-     MOBILE OVERRIDES — Preact renders inline styles; attribute selectors
-     target the resulting style attribute strings.
+     MOBILE OVERRIDES — root cause: on a phone the app drops out of its fixed
+     viewport layout into normal document flow (handled by the isMobile flag in
+     App). These rules back that up: inline grid-template-columns are overridden
+     with !important (inline styles otherwise win), and every multi-column grid
+     collapses to a single stacked column. No fixed viewport heights, no hidden
+     overflow, no horizontal scroll. Breakpoint matches MOBILE_Q in App (900px).
      ────────────────────────────────────────────────────────────────────── */
+  html, body { max-width: 100%; overflow-x: hidden; }
+
   @media (max-width: 900px) {
-    /* Collapse any 2-col / 3-col / 4-col / 5-col / 7-col grids to single column */
+    /* Collapse every multi-column grid to a single stacked column. !important is
+       required because Preact writes grid-template-columns as an inline style. */
     div[style*="grid-template-columns: 1fr 1fr"],
     div[style*="grid-template-columns: 1.1fr 1fr"],
     div[style*="grid-template-columns: 1.15fr 1fr"],
@@ -42,23 +49,37 @@
     div[style*="grid-template-columns: repeat(4"],
     div[style*="grid-template-columns: repeat(5"],
     div[style*="grid-template-columns: repeat(7"],
-    div[style*="grid-template-columns: 72px 1fr 200px 80px"] {
+    section[style*="grid-template-columns: 1.1fr 1fr"],
+    section[style*="grid-template-columns: repeat(3"],
+    section[style*="grid-template-columns: repeat(5"] {
       grid-template-columns: 1fr !important;
       gap: 14px !important;
     }
 
-    /* Reduce big page paddings */
+    /* Grid items default to min-width:auto, which lets a column grow to its
+       content's intrinsic width and overflow the viewport. Force them to shrink. */
+    div[style*="display: grid"] > *,
+    section[style*="display: grid"] > * { min-width: 0 !important; }
+
+    /* Reduce big page paddings so content fits the viewport width */
     div[style*="padding: 28px 32px"],
     div[style*="padding: 40px 56px"],
+    div[style*="padding: 40px 44px 56px"],
+    div[style*="padding: 40px 48px"],
+    div[style*="padding: 40px 44px"],
+    div[style*="padding: 28px 44px"],
+    div[style*="padding: 32px 36px 40px"],
     div[style*="padding: 32px 40px"] {
-      padding: 16px !important;
+      padding: 18px 16px !important;
     }
 
-    /* Side-by-side studio/scanner pane wrappers — allow vertical scroll */
-    div[style*="height: 100%"][style*="overflow: hidden"] {
+    /* Any pane that locks to viewport height / hides overflow flows instead */
+    div[style*="height: 100%"][style*="overflow: hidden"],
+    div[style*="height: calc(100vh - 65px)"] {
       height: auto !important;
       overflow: visible !important;
     }
+    div[style*="overflow-y: auto"] { overflow-y: visible !important; }
 
     /* Header — allow wrap, smaller padding */
     header[style*="padding: 14px 28px"] {
@@ -67,7 +88,7 @@
       gap: 8px !important;
     }
 
-    /* Nav — make horizontally scrollable instead of overflowing */
+    /* Nav — horizontally scrollable instead of overflowing the header */
     header nav {
       overflow-x: auto !important;
       max-width: 100% !important;
@@ -76,31 +97,19 @@
     }
     header nav::-webkit-scrollbar { display: none; }
 
-    /* Direction switcher — center bottom, smaller */
-    div[style*="position: fixed"][style*="bottom: 20px"][style*="right: 20px"] {
-      bottom: 12px !important;
-      right: 12px !important;
-      left: 12px !important;
-      justify-content: center !important;
-      font-size: 12px !important;
-    }
-
     /* Modal — full width with small inset */
     div[style*="position: fixed"][style*="inset: 0"] > div[style*="width: 540px"] {
       width: 100% !important;
       padding: 20px !important;
     }
 
-    /* Calendar — keep 7-col grid usable */
-    div[style*="grid-template-columns: repeat(7"] {
-      grid-template-columns: repeat(7, minmax(80px, 1fr)) !important;
-      overflow-x: auto !important;
-    }
+    /* Oversized display headings shrink so they never overflow the viewport */
+    h1 { font-size: clamp(30px, 9vw, 56px) !important; }
   }
 
   @media (max-width: 600px) {
-    /* Bigger headlines shrink to fit */
-    h1, h2, h3 { word-wrap: break-word; }
+    /* Bigger headlines wrap rather than overflow */
+    h1, h2, h3 { word-wrap: break-word; overflow-wrap: break-word; }
   }
 </style>
 </head>
@@ -200,12 +209,11 @@ const PLAT = {
 };
 
 /* ════════════════════════════════════════════════════════════════════════════
-   THEME — one helper, three directions
-   "Bridge" — clean dense working surface; Cadence DNA on chrome only
-   "Full"   — push the marketing warmth deep into the app
-   "Editorial" — monochrome, serif headers, single gradient accent
+   THEME — one helper, one direction ("Full")
+   "Full" — push the marketing warmth deep into the app.
+   Honors the `dark` flag and returns the matching dark or light palette.
    ════════════════════════════════════════════════════════════════════════════ */
-function themeFor(direction, dark) {
+function themeFor(dark) {
   const palette = dark ? {
     canvas: '#0A0E0A',     surface: '#14181A',     surfaceHi: '#1F2422',
     ink: '#FAFBFA',        body: '#C8CFCA',         bodyMid: '#A8B0AA', mute: '#8A938C',
@@ -219,7 +227,7 @@ function themeFor(direction, dark) {
   };
 
   const shared = {
-    direction, dark, ...palette,
+    dark, ...palette,
     accent: '#00D68F', accentInk: '#04231A', accentDeep: '#00A870',
     g1: '#6EE7B7', g2: '#2DD4BF', g3: '#67E8F9',
     fontDisplay: FI, fontBody: FI, fontMono: FM, fontSerif: FS,
@@ -229,17 +237,7 @@ function themeFor(direction, dark) {
     sh4: dark ? '0 24px 48px -16px rgba(0,0,0,.8)' : '0 24px 48px -16px rgba(10,14,10,.16), 0 8px 16px -8px rgba(10,14,10,.06)',
   };
 
-  if (direction === 'bridge') return { ...shared,
-    // Clean working surface; warm chrome
-    rCard: 14, rInput: 8, rChip: 999, rTile: 8,
-    cardBorder: true, cardShadow: 'sh1',
-    eyebrowFont: FM, headerFont: FI, displayFont: FI,
-    headerWeight: 600, h1Weight: 700,
-    gridDensity: 1,
-    surfaceTinted: false,
-    accentMode: 'chrome',   // gradient on wordmark, dots, sparklines, scan
-  };
-  if (direction === 'full') return { ...shared,
+  return { ...shared,
     canvas: dark ? '#0A0E0A' : '#FAFBFA',
     surface: dark ? '#14181A' : '#FFFFFF',
     rCard: 22, rInput: 14, rChip: 999, rTile: 14,
@@ -250,16 +248,6 @@ function themeFor(direction, dark) {
     surfaceTinted: true,
     accentMode: 'surfaces', // gradient washes on Discover, eyebrows, big radii
   };
-  if (direction === 'editorial') return { ...shared,
-    rCard: 4, rInput: 4, rChip: 4, rTile: 4,
-    cardBorder: true, cardShadow: 'none',
-    eyebrowFont: FM, headerFont: FS, displayFont: FI,
-    headerWeight: 400, h1Weight: 700,
-    gridDensity: 0.95,
-    surfaceTinted: false,
-    accentMode: 'sparing',  // gradient only on live dot, active tab underline, one CTA
-  };
-  return shared;
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -471,12 +459,12 @@ function inputStyle(T) { return { width:'100%', background: T.surfaceHi, border:
 function Eyebrow({ T, text, live=false, color, kicker }) {
   return h('div', { style: eb(T, color) },
     live && h(LiveDot, { color: T.accent, size:7 }),
-    kicker && h('span', { className: T.headerFont===FS ? 'serif-i' : '', style:{ marginRight: 4, textTransform:'none', letterSpacing:'-0.01em', fontFamily: T.headerFont===FS?FS:T.eyebrowFont, fontSize: T.headerFont===FS?14:11.5, color: T.body, opacity: T.direction==='editorial'?1:.85, fontStyle: T.headerFont===FS?'italic':'normal' } }, kicker),
+    kicker && h('span', { className: T.headerFont===FS ? 'serif-i' : '', style:{ marginRight: 4, textTransform:'none', letterSpacing:'-0.01em', fontFamily: T.headerFont===FS?FS:T.eyebrowFont, fontSize: T.headerFont===FS?14:11.5, color: T.body, opacity: .85, fontStyle: T.headerFont===FS?'italic':'normal' } }, kicker),
     h('span', null, text)
   );
 }
 
-/* Section title — adapts font per direction */
+/* Section title */
 function SectionTitle({ T, kicker, children, size=24 }) {
   return h('div', { style: { display:'flex', flexDirection:'column', gap: 6, marginBottom: 14 } },
     kicker && h('div', { style: eb(T) }, kicker),
@@ -484,7 +472,7 @@ function SectionTitle({ T, kicker, children, size=24 }) {
   );
 }
 
-/* Card primitive — border vs shadow per direction */
+/* Card primitive */
 function Card({ T, children, style, hover=false, onClick, tint }) {
   const base = {
     background: tint && T.surfaceTinted ? `linear-gradient(135deg, ${T.surface} 0%, ${T.g2}10 100%)` : T.surface,
@@ -534,40 +522,25 @@ function EvidenceChips({ T, evidence }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   TOP BAR — same shape across directions, accent strategy varies
+   TOP BAR
    ════════════════════════════════════════════════════════════════════════════ */
 const NAV_ITEMS = [ { id:'home', label:'Discover' }, { id:'scanner', label:'Scanner' }, { id:'studio', label:'Studio' }, { id:'calendar', label:'Calendar' }, { id:'ideas', label:'Ideas' } ];
 
 function TopBar({ T, tab, setTab, showKeys, dark, setDark, savedCount }) {
-  const isEditorial = T.direction==='editorial';
-  const isFull = T.direction==='full';
-
   const navBtn = (n) => {
     const active = tab===n.id;
     const common = { whiteSpace: 'nowrap', flexShrink: 0 };
-    if (isEditorial) {
-      return h('button', { key: n.id, onClick: ()=>setTab(n.id), style: { ...common, background:'transparent', border:'none', cursor:'pointer', position:'relative', padding:'8px 0', margin:'0 12px', fontFamily: T.fontBody, fontSize:14, fontWeight: 500, color: active ? T.ink : T.bodyMid, letterSpacing:'-0.01em' } },
-        n.label,
-        active && h('span', { className:'gt-bg', style:{ position:'absolute', left:0, right:0, bottom:-1, height:2, borderRadius:1 } })
-      );
-    }
-    if (isFull) {
-      return h('button', { key: n.id, onClick: ()=>setTab(n.id), style: { ...common, background: active ? T.surface : 'transparent', border: active ? `1px solid ${T.hairline}` : '1px solid transparent', color: active ? T.ink : T.bodyMid, fontFamily: T.fontBody, fontSize:14, fontWeight:500, padding:'8px 14px', borderRadius: 999, cursor:'pointer', letterSpacing:'-0.01em', boxShadow: active ? T.sh1 : 'none' } }, n.label);
-    }
-    // bridge
-    return h('button', { key: n.id, onClick: ()=>setTab(n.id), style: { ...common, background: active ? T.surfaceHi : 'transparent', color: active ? T.ink : T.bodyMid, fontFamily: T.fontBody, fontSize:14, fontWeight:500, padding:'7px 12px', borderRadius: 999, cursor:'pointer', border:'none', letterSpacing:'-0.01em' } }, n.label);
+    return h('button', { key: n.id, onClick: ()=>setTab(n.id), style: { ...common, background: active ? T.surface : 'transparent', border: active ? `1px solid ${T.hairline}` : '1px solid transparent', color: active ? T.ink : T.bodyMid, fontFamily: T.fontBody, fontSize:14, fontWeight:500, padding:'8px 14px', borderRadius: 999, cursor:'pointer', letterSpacing:'-0.01em', boxShadow: active ? T.sh1 : 'none' } }, n.label);
   };
 
   const wordmark = h('div', { onClick: ()=>setTab('home'), style: { display:'flex', alignItems:'center', gap: 9, cursor:'pointer', flexShrink:0 } },
     h(Mark, { size: 24 }),
-    isEditorial
-      ? h('span', { className:'serif', style: { fontSize: 22, fontStyle:'italic', color: T.ink, letterSpacing:'-0.015em' } }, 'Cadence')
-      : h('span', { style: { fontFamily: T.fontBody, fontSize: 18, fontWeight: 700, letterSpacing:'-0.025em', color: T.ink } }, 'Cadence')
+    h('span', { style: { fontFamily: T.fontBody, fontSize: 18, fontWeight: 700, letterSpacing:'-0.025em', color: T.ink } }, 'Cadence')
   );
 
   return h('header', { style: { display:'flex', alignItems:'center', gap: 16, padding:'14px 28px', borderBottom:`1px solid ${T.hairline}`, background: T.canvas, position:'sticky', top:0, zIndex:50, flexShrink:0 } },
     wordmark,
-    h('nav', { style: { display:'flex', gap: isEditorial ? 0 : 4, marginLeft: 8, flexShrink: 0 } }, NAV_ITEMS.map(navBtn)),
+    h('nav', { style: { display:'flex', gap: 4, marginLeft: 8, flexShrink: 0 } }, NAV_ITEMS.map(navBtn)),
     h('div', { style: { flex:1, minWidth: 0 } }),
     h('div', { style: { display:'flex', alignItems:'center', gap: 8, flexShrink: 0, whiteSpace:'nowrap' } },
       h('button', { onClick: ()=>setDark(d => !d), title: dark ? 'Light mode' : 'Dark mode', style: { ...btnGhost(T), fontSize: 14, padding:'8px 10px', display:'inline-flex', alignItems:'center', gap:6, flexShrink: 0 } },
@@ -575,9 +548,7 @@ function TopBar({ T, tab, setTab, showKeys, dark, setDark, savedCount }) {
       ),
       // 'API keys' button removed — keys are managed securely on the server.
       null,
-      isEditorial
-        ? h('button', { onClick: ()=>setTab('scanner'), style: { background:'transparent', border:'none', cursor:'pointer', position:'relative', fontFamily:T.fontBody, fontSize:14, fontWeight:600, padding:'8px 4px', color: T.ink } }, 'New scan ', h('span', { className:'gt', style:{fontWeight:700} }, '→'))
-        : h('button', { onClick: ()=>setTab('scanner'), style: btnAccent(T) }, 'New scan ', h('span', null, '→'))
+      h('button', { onClick: ()=>setTab('scanner'), style: btnAccent(T) }, 'New scan ', h('span', null, '→'))
     )
   );
 }
@@ -623,114 +594,6 @@ const MOCK_TRENDS = [
   { id:'m2', platform:'Instagram', handle:'@quietmornings',  title:'Carousel: 7 things I quit doing before 9am that changed everything', views:'1.8M', posts:'2.1K', delta:'+128%', window:'7d',  plat:'instagram', fmtKey:'carousel' },
   { id:'m3', platform:'Reddit',    handle:'r/productivity',  title:'"the best ___ is the one you actually ___" replies sub-thread', views:'912K', posts:'4.2K', delta:'+86%',  window:'48h', plat:'reddit', fmtKey:'reply' },
 ];
-
-function DiscoverBridge({ T, t, inputVal, setInputVal, doScan, setTab }) {
-  return h('div', { style: { padding: '28px 32px 48px', maxWidth: 1320, margin: '0 auto', display:'flex', flexDirection:'column', gap: 36 } },
-
-    /* Hero row */
-    h('section', { style: { display:'grid', gridTemplateColumns:'1.15fr 1fr', gap: 40, alignItems:'start' } },
-
-      h('div', null,
-        h(Eyebrow, { T, text:'Live · 12,438 trends spotted today', live: true }),
-        h('h1', { style: { fontFamily: T.fontBody, fontSize: 64, fontWeight: 700, letterSpacing:'-0.035em', lineHeight: 1.02, margin:'14px 0 14px', color: T.ink } },
-          'See what\'s hitting', h('br'),
-          h('span', { className:'gt' }, 'before it peaks.')
-        ),
-        h('p', { style: { fontFamily: T.fontBody, fontSize: 16, color: T.body, lineHeight: 1.55, margin:'0 0 22px', maxWidth: 520, letterSpacing:'-0.005em' } }, 'Cadence scans six platforms in real time and surfaces the formats your niche is actually consuming — then writes the post and plans your week.'),
-
-        /* Search bar — clean working input */
-        h('div', { style: { display:'flex', alignItems:'center', gap: 8, background: T.surface, border:`1px solid ${T.hairline}`, borderRadius: T.rChip, padding:'6px 6px 6px 18px', boxShadow: T.sh2, maxWidth: 560 } },
-          h('span', { style: { fontFamily: T.fontMono, fontSize: 13, color: T.mute } }, '⌕'),
-          h('input', { value: inputVal, onInput: e => setInputVal(e.target.value), onKeyDown: e => e.key==='Enter' && doScan(), placeholder:'Enter your niche…', style: { flex:1, border:'none', outline:'none', background:'transparent', fontFamily: T.fontBody, fontSize: 15, fontWeight: 500, color: T.ink, padding:'8px 4px' } }),
-          h('button', { onClick: doScan, style: btnAccent(T) }, 'Scan ', h('span', null, '→'))
-        ),
-
-        h('div', { style: { display:'flex', alignItems:'center', gap: 8, marginTop: 14, flexWrap:'wrap' } },
-          h('span', { style:{ ...mono(T), textTransform:'uppercase', marginRight: 2 } }, 'TRY'),
-          ['Meal prep','22yr finance','Home reno','Pet content','AI tools'].map(s =>
-            h('button', { key: s, onClick: ()=>setInputVal(s), style: { background: T.surface, border:`1px solid ${T.hairline}`, color: T.ink, fontFamily: T.fontBody, fontSize: 13, fontWeight: 500, letterSpacing:'-0.005em', padding:'6px 12px', borderRadius: 999, cursor:'pointer' } }, s)
-          )
-        )
-      ),
-
-      /* HOT NOW preview — clean white card with hairline + sparkline */
-      h(Card, { T, style: { padding: 20, display:'flex', flexDirection:'column', gap: 14, animation:'float-a 7s ease-in-out infinite' } },
-        h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center' } },
-          h(Chip, { T, color: PLAT.tiktok.dot }, 'TIKTOK'),
-          h(HeatPill, { T, heat: 'viral' })
-        ),
-        h('div', null,
-          h('div', { style: { ...eb(T), marginBottom: 7 } }, '@dailygrindcore · 24h window'),
-          h('div', { style: { fontFamily: T.fontBody, fontSize: 19, fontWeight: 600, letterSpacing:'-0.02em', lineHeight: 1.25, color: T.ink } }, 'POV: your morning routine but every step is a productivity hack.')
-        ),
-        h('div', { style: { padding:'4px 0 0' } }, h(Sparkline, { t, height: 54, gradient: true })),
-        h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 12 } },
-          [['Views','4.2M','+312%'],['Posts','8.4K','+128%'],['Saves','612K','+96%']].map(([k,v,d]) =>
-            h('div', { key: k, style: { padding:'10px 12px', background: T.surfaceHi, borderRadius: T.rTile } },
-              h('div', { style: { ...eb(T), marginBottom: 4 } }, k),
-              h('div', { style: { fontFamily: T.fontBody, fontSize: 19, fontWeight: 700, letterSpacing:'-0.02em', color: T.ink, lineHeight: 1 } }, v),
-              h('div', { style: { fontFamily: T.fontMono, fontSize: 11, color: T.accentDeep, marginTop: 3 } }, d)
-            )
-          )
-        ),
-        h('div', { style: { display:'flex', gap: 8, paddingTop: 4 } },
-          h('button', { onClick: doScan, style: { ...btnPrimary(T), flex: 1, justifyContent:'center' } }, 'Open brief'),
-          h('button', { style: { ...btnSec(T), flex: 1, justifyContent:'center', display:'flex' } }, 'Save')
-        )
-      )
-    ),
-
-    /* BROWSE BY FORMAT — filled rectangles */
-    h('section', null,
-      h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom: 14 } },
-        h('div', { style: eb(T) }, 'Browse by format'),
-        h('button', { onClick:()=>setTab('scanner'), style: { ...btnGhost(T), color: T.ink, textDecoration:'underline', textUnderlineOffset: 4 } }, 'See every format →')
-      ),
-      h('div', { style: { display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap: 12 } },
-        FORMAT_ACCENTS.map(a =>
-          h('div', { key: a.key, onClick: ()=>setTab('scanner'), style: { background: a.bg, color: a.fg, borderRadius: T.rTile, padding:'18px 18px 16px', height: 110, display:'flex', flexDirection:'column', justifyContent:'space-between', cursor:'pointer', boxShadow: T.sh1, transition:'transform .15s' } },
-            h('div', { style: { fontFamily: T.fontMono, fontSize: 10.5, fontWeight: 600, letterSpacing:'0.08em', textTransform:'uppercase', opacity: 0.72 } }, a.key.replace('_',' · ')),
-            h('div', { style: { fontFamily: T.fontBody, fontSize: 18, fontWeight: 600, letterSpacing:'-0.02em', lineHeight: 1.1 } }, a.label)
-          )
-        )
-      )
-    ),
-
-    /* TOP TRENDS — dense card row */
-    h('section', null,
-      h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom: 14 } },
-        h('div', { style: eb(T) }, 'Top trends · AI tools for creators'),
-        h('div', { style: { display:'flex', gap: 6 } }, ['24h','7d','30d'].map((w,i) => h('button', { key: w, style: { background: i===0 ? T.ink : T.surface, color: i===0 ? T.onPrimary : T.ink, border: i===0 ? 'none' : `1px solid ${T.hairline}`, fontFamily: T.fontBody, fontSize: 12.5, fontWeight: 500, padding:'6px 12px', borderRadius: 999, cursor:'pointer' } }, w)))
-      ),
-      h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 16 } },
-        MOCK_TRENDS.map((tr,i) => {
-          const fa = FORMAT_ACCENTS.find(f=>f.key===tr.fmtKey) || FORMAT_ACCENTS[0];
-          return h(Card, { T, key: tr.id, onClick: ()=>setTab('scanner'), style: { padding: 18, display:'flex', flexDirection:'column', gap: 12, cursor:'pointer' } },
-            h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center' } },
-              h(Chip, { T, color: PLAT[tr.plat].dot }, tr.platform.toUpperCase()),
-              h('span', { style: mono(T) }, tr.window)
-            ),
-            h('div', { style: { background: fa.soft, color: fa.fg, borderRadius: T.rTile, padding:'18px 14px', textAlign:'center', fontFamily: T.fontBody, fontSize: 11, fontWeight: 600, letterSpacing:'0.08em', textTransform:'uppercase' } }, fa.label),
-            h('div', { style: { ...eb(T) } }, tr.handle),
-            h('div', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 500, letterSpacing:'-0.015em', lineHeight: 1.3, color: T.ink, minHeight: 56 } }, tr.title),
-            h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 8, paddingTop: 10, borderTop:`1px solid ${T.hairlineSoft}` } },
-              [['Views',tr.views],['Posts',tr.posts],['Δ',tr.delta]].map(([k,v]) =>
-                h('div', { key: k },
-                  h('div', { style: { ...eb(T), marginBottom: 3 } }, k),
-                  h('div', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 700, color: k==='Δ' ? T.accentDeep : T.ink } }, v)
-                )
-              )
-            ),
-            h('div', { style: { display:'flex', gap: 6 } },
-              h('button', { style: { ...btnPrimary(T), flex: 1, justifyContent:'center', padding:'8px 0', fontSize: 13 } }, 'Open brief'),
-              h('button', { style: { ...btnSec(T), padding:'8px 12px', fontSize: 13 } }, '＋')
-            )
-          );
-        })
-      )
-    )
-  );
-}
 
 function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab }) {
   return h('div', { style: { position:'relative' } },
@@ -865,151 +728,12 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab }) {
   );
 }
 
-function DiscoverEditorial({ T, t, inputVal, setInputVal, doScan, setTab }) {
-  return h('div', { style: { padding:'40px 56px 64px', maxWidth: 1240, margin:'0 auto', display:'flex', flexDirection:'column', gap: 56 } },
-
-    /* Hero — magazine masthead */
-    h('section', null,
-      h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'flex-end', paddingBottom: 16, borderBottom:`1px solid ${T.hairline}`, marginBottom: 32 } },
-        h('div', { style: { display:'flex', alignItems:'center', gap: 12 } },
-          h(LiveDot, { color: T.accent, size: 8 }),
-          h('span', { className:'serif-i', style:{ fontSize: 19, color: T.ink, letterSpacing:'-0.005em' } }, 'Today\'s signal'),
-          h('span', { style: mono(T) }, '·'),
-          h('span', { style: { ...mono(T), color: T.body } }, '12,438 TRENDS · 06:14 PT')
-        ),
-        h('div', { style: { ...mono(T), color: T.body } }, 'VOL. 04 / WK 22')
-      ),
-
-      h('div', { style: { display:'grid', gridTemplateColumns:'1.45fr 1fr', gap: 56, alignItems:'start' } },
-        h('div', null,
-          h('h1', { style: { fontFamily: T.fontBody, fontSize: 96, fontWeight: 800, letterSpacing:'-0.05em', lineHeight: 0.92, margin:'0 0 14px', color: T.ink } },
-            'See what\'s', h('br'),
-            h('span', { className:'serif-i', style: { fontWeight: 400, fontSize: 92 } }, 'hitting,'), h('br'),
-            'before ', h('span', { className:'gt', style:{ display:'inline' } }, 'it peaks.')
-          ),
-          h('p', { className:'serif', style: { fontSize: 22, lineHeight: 1.4, color: T.body, margin:'14px 0 28px', maxWidth: 580 } }, 'Six platforms, every five minutes. The formats your niche is actually consuming — typed up, ranked, and ready to ship.'),
-
-          /* Editorial "rule" input — just a line */
-          h('div', { style: { display:'flex', alignItems:'center', gap: 12, paddingBottom: 12, borderBottom:`2px solid ${T.ink}`, maxWidth: 580 } },
-            h('span', { style: mono(T) }, 'NICHE/'),
-            h('input', { value: inputVal, onInput: e=>setInputVal(e.target.value), onKeyDown: e => e.key==='Enter' && doScan(), placeholder:'enter a niche…', style: { flex:1, border:'none', outline:'none', background:'transparent', fontFamily: T.fontBody, fontSize: 22, fontWeight: 500, color: T.ink, padding:'4px 0', letterSpacing:'-0.015em' } }),
-            h('button', { onClick: doScan, style: { background:'transparent', border:'none', cursor:'pointer', fontFamily: T.fontBody, fontSize: 16, fontWeight: 600, color: T.ink, padding:'4px 0' } }, 'Scan ', h('span', { className:'gt', style:{ fontWeight: 700 } }, '→'))
-          ),
-          h('div', { style: { display:'flex', alignItems:'center', gap: 16, marginTop: 14, flexWrap:'wrap' } },
-            h('span', { style: mono(T) }, 'OR ·'),
-            ['Meal prep','22yr finance','Home reno','Pet content','AI tools'].map((s,i,arr) =>
-              h(Fragment, { key: s },
-                h('button', { onClick: ()=>setInputVal(s), style: { background:'transparent', border:'none', cursor:'pointer', fontFamily: T.fontBody, fontSize: 14, color: T.body, padding:0, textDecoration:'underline', textUnderlineOffset: 4, textDecorationColor: T.hairline } }, s),
-                i < arr.length-1 && h('span', { style: { ...mono(T), color: T.mute } }, '·')
-              )
-            )
-          )
-        ),
-
-        /* Compact brief card — mostly mono, gradient as ONE accent line */
-        h('div', { style: { paddingTop: 20 } },
-          h('div', { style: { display:'flex', alignItems:'center', gap: 10, marginBottom: 14 } },
-            h('span', { style: mono(T) }, 'LIVE BRIEF / 04:02 PT'),
-            h('span', { className:'gt-bg', style:{ flex: 1, height: 1 } })
-          ),
-          h('div', { style: { display:'flex', alignItems:'center', gap: 8, marginBottom: 6 } },
-            h('span', { style: { width:6, height:6, borderRadius:'50%', background: PLAT.tiktok.dot } }),
-            h('span', { style: { ...mono(T), color: T.ink } }, 'TIKTOK · @DAILYGRINDCORE')
-          ),
-          h('div', { className:'serif', style: { fontSize: 32, lineHeight: 1.05, color: T.ink, letterSpacing:'-0.02em', margin:'8px 0 14px' } }, '"POV: your morning routine but every step is a productivity hack."'),
-          h(Sparkline, { t, height: 38, gradient: true }),
-          h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 0, paddingTop: 14, marginTop: 14, borderTop:`1px solid ${T.hairline}` } },
-            [['VIEWS','4.2M','+312%'],['POSTS','8.4K','+128%'],['SAVES','612K','+96%']].map(([k,v,d],i) =>
-              h('div', { key: k, style: { padding:'0 14px', borderRight: i<2 ? `1px solid ${T.hairlineSoft}` : 'none' } },
-                h('div', { style: mono(T) }, k),
-                h('div', { style: { fontFamily: T.fontBody, fontSize: 26, fontWeight: 700, letterSpacing:'-0.025em', color: T.ink, lineHeight: 1, marginTop: 4 } }, v),
-                h('div', { style: { fontFamily: T.fontMono, fontSize: 11, color: T.accentDeep, marginTop: 3 } }, d)
-              )
-            )
-          ),
-          h('div', { style: { display:'flex', gap: 14, marginTop: 18, alignItems:'center' } },
-            h('button', { onClick: doScan, style: { background:'transparent', border:'none', cursor:'pointer', fontFamily: T.fontBody, fontSize: 15, fontWeight: 700, color: T.ink, padding:0, display:'inline-flex', alignItems:'center', gap: 6 } }, 'Read the brief ', h('span', { className:'gt', style:{ fontWeight:700 } }, '→')),
-            h('span', { style: mono(T) }, '·'),
-            h('button', { style: { background:'transparent', border:'none', cursor:'pointer', fontFamily: T.fontBody, fontSize: 14, color: T.body, padding:0, textDecoration:'underline', textUnderlineOffset: 4 } }, 'Save to ideas')
-          )
-        )
-      )
-    ),
-
-    /* TABLE OF CONTENTS — five formats as numbered list */
-    h('section', null,
-      h('div', { className:'serif', style: { fontSize: 38, color: T.ink, letterSpacing:'-0.02em', marginBottom: 6 } }, 'Five shapes the algorithm rewards.'),
-      h('div', { style: { ...mono(T), color: T.body, marginBottom: 20 } }, 'BROWSE BY FORMAT · 5 ITEMS'),
-      h('div', { style: { borderTop: `1px solid ${T.ink}` } },
-        FORMAT_ACCENTS.map((a,i) =>
-          h('div', { key: a.key, onClick: ()=>setTab('scanner'), style: { display:'grid', gridTemplateColumns:'72px 1fr 200px 80px', gap: 24, padding:'20px 0', borderBottom:`1px solid ${T.hairline}`, alignItems:'center', cursor:'pointer' } },
-            h('div', { style: { fontFamily: T.fontMono, fontSize: 14, color: T.body, fontWeight: 500 } }, String(i+1).padStart(2,'0')),
-            h('div', null,
-              h('div', { className:'serif', style: { fontSize: 28, lineHeight: 1.05, color: T.ink, letterSpacing:'-0.015em', display:'flex', alignItems:'center', gap: 14 } },
-                h('span', { style: { width: 10, height: 10, borderRadius: '50%', background: a.bg, flexShrink: 0 } }),
-                a.label
-              ),
-              h('div', { style: { ...mono(T), color: T.bodyMid, marginTop: 6 } }, a.key.replace('_',' · ').toUpperCase())
-            ),
-            h('div', { style: { ...mono(T), color: T.body, textAlign:'right' } }, ['8.2K /DAY','3.1K /DAY','1.9K /DAY','892 /DAY','2.4K /DAY'][i]),
-            h('div', { style: { fontFamily: T.fontBody, fontSize: 15, color: T.ink, fontWeight: 500, textAlign:'right' } }, h('span', { className: 'gt' }, '→'))
-          )
-        )
-      )
-    ),
-
-    /* TOP TRENDS — magazine column layout */
-    h('section', null,
-      h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'flex-end', marginBottom: 24 } },
-        h('div', null,
-          h('div', { className:'serif', style: { fontSize: 38, color: T.ink, letterSpacing:'-0.02em' } }, 'In the lab today.'),
-          h('div', { style: { ...mono(T), color: T.body, marginTop: 6 } }, 'TOP TRENDS · AI TOOLS FOR CREATORS · 24H')
-        ),
-        h('div', { style: { display:'flex', alignItems:'center', gap: 12, ...mono(T) } },
-          ['24H','7D','30D'].map((w,i) => h('button', { key: w, style: { background:'transparent', border:'none', cursor:'pointer', fontFamily: T.fontMono, fontSize: 12, color: i===0 ? T.ink : T.bodyMid, fontWeight: i===0 ? 700 : 500, padding:'4px 0', borderBottom: i===0 ? `2px solid ${T.ink}`:'2px solid transparent', letterSpacing:'0.04em' } }, w))
-        )
-      ),
-      h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 32 } },
-        MOCK_TRENDS.map((tr,i) => {
-          const fa = FORMAT_ACCENTS.find(f=>f.key===tr.fmtKey) || FORMAT_ACCENTS[0];
-          return h('article', { key: tr.id, onClick: ()=>setTab('scanner'), style: { display:'flex', flexDirection:'column', gap: 14, cursor:'pointer', borderTop:`2px solid ${T.ink}`, paddingTop: 14 } },
-            h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center' } },
-              h('div', { style: { display:'flex', alignItems:'center', gap: 8 } },
-                h('span', { style: { fontFamily: T.fontMono, fontSize: 11, color: T.bodyMid } }, String(i+1).padStart(2,'0')),
-                h('span', { style: { width:6, height:6, borderRadius:'50%', background: PLAT[tr.plat].dot } }),
-                h('span', { style: { ...mono(T), color: T.ink } }, tr.platform.toUpperCase())
-              ),
-              h('span', { style: { width:6, height:6, borderRadius:'50%', background: fa.bg } })
-            ),
-            h('div', { className:'serif', style: { fontSize: 26, lineHeight: 1.15, letterSpacing:'-0.018em', color: T.ink, margin:'4px 0' } }, tr.title),
-            h('div', { style: mono(T) }, tr.handle.toUpperCase() + ' · ' + tr.window.toUpperCase()),
-            h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'baseline', paddingTop: 12, borderTop:`1px solid ${T.hairline}` } },
-              [['Views',tr.views],['Posts',tr.posts],['Δ',tr.delta]].map(([k,v]) =>
-                h('div', { key: k, style: { display:'flex', flexDirection:'column', gap: 2 } },
-                  h('div', { style: mono(T) }, k.toUpperCase()),
-                  h('div', { style: { fontFamily: T.fontBody, fontSize: 18, fontWeight: 700, letterSpacing:'-0.02em', color: k==='Δ' ? T.accentDeep : T.ink } }, v)
-                )
-              )
-            ),
-            h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', paddingTop: 4 } },
-              h('button', { style: { background:'transparent', border:'none', cursor:'pointer', fontFamily: T.fontBody, fontSize: 14, fontWeight: 600, color: T.ink, padding: 0 } }, 'Read brief ', h('span', { className:'gt', style:{ fontWeight: 700 } }, '→')),
-              h('button', { style: { background:'transparent', border:'none', cursor:'pointer', fontFamily: T.fontBody, fontSize: 13, color: T.bodyMid, padding: 0, textDecoration:'underline', textUnderlineOffset: 4 } }, 'Save')
-            )
-          );
-        })
-      )
-    )
-  );
-}
-
 function LandingPage(props) {
   const [inputVal, setInputVal] = useState('AI tools for creators');
   const { T, t, setTab, setNiche, onScan } = props;
   const doScan = () => { setNiche(inputVal); setTab('scanner'); onScan(inputVal); };
   const passProps = { T, t, inputVal, setInputVal, doScan, setTab };
-  if (T.direction === 'bridge') return h(DiscoverBridge, passProps);
-  if (T.direction === 'full') return h(DiscoverFull, passProps);
-  return h(DiscoverEditorial, passProps);
+  return h(DiscoverFull, passProps);
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -1025,20 +749,17 @@ const SCANNER_PLATS = [
 ];
 const TONE_DEFS = [ { id:'educational', l:'Educational' }, { id:'entertaining', l:'Entertaining' }, { id:'inspirational', l:'Inspirational' }, { id:'controversial', l:'Contrarian' }, { id:'behind-scenes', l:'Behind the scenes' }, { id:'promotional', l:'Promotional' } ];
 
-function ScannerSetup({ T, niche, setNiche, audience, setAudience, platforms, togglePlat, formats, toggleFmt, tone, setTone, extra, setExtra, onScan }) {
-  const isEditorial = T.direction === 'editorial';
-  const isFull = T.direction === 'full';
-  return h('div', { style: { display:'grid', gridTemplateColumns:'1fr 1fr', height:'100%', overflow:'hidden' } },
+function ScannerSetup({ T, isMobile, niche, setNiche, audience, setAudience, platforms, togglePlat, formats, toggleFmt, tone, setTone, extra, setExtra, onScan }) {
+  return h('div', { style: { display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', height: isMobile ? 'auto' : '100%', overflow: isMobile ? 'visible' : 'hidden' } },
 
     /* LEFT — form */
-    h('div', { style: { padding: isFull ? '40px 48px' : '32px 40px', overflowY:'auto', borderRight: T.cardBorder ? `1px solid ${T.hairline}` : 'none', display:'flex', flexDirection:'column', gap: 26, background: T.canvas } },
+    h('div', { style: { padding: isMobile ? '20px 16px' : '40px 48px', overflowY: isMobile ? 'visible' : 'auto', borderRight: T.cardBorder ? `1px solid ${T.hairline}` : 'none', display:'flex', flexDirection:'column', gap: 26, background: T.canvas } },
       h('div', null,
         h(Eyebrow, { T, text:'New scan', live: true }),
-        h('h1', { className: isEditorial ? 'serif' : '', style: { fontFamily: isEditorial ? FS : T.fontBody, fontSize: isEditorial ? 56 : 44, fontWeight: isEditorial ? 400 : 700, letterSpacing:'-0.035em', lineHeight: isEditorial ? 1.08 : 1.02, margin:'12px 0 18px', color: T.ink, paddingBottom: isEditorial ? 4 : 0 } },
-          isEditorial ? h(Fragment, null, 'See what\'s ', h('span', { className:'serif-i' }, 'hitting,'), h('br'), 'before ', h('span', { className:'gt' }, 'it peaks.'))
-                      : h(Fragment, null, 'See what\'s hitting', h('br'), h('span', { className:'gt' }, 'before it peaks.'))
+        h('h1', { style: { fontFamily: T.fontBody, fontSize: 44, fontWeight: 700, letterSpacing:'-0.035em', lineHeight: 1.02, margin:'12px 0 18px', color: T.ink } },
+          h(Fragment, null, 'See what\'s hitting', h('br'), h('span', { className:'gt' }, 'before it peaks.'))
         ),
-        h('p', { style: { fontFamily: T.fontBody, fontSize: 15, color: T.body, lineHeight: 1.55, margin: isEditorial ? '6px 0 0' : 0, maxWidth: 520 } }, 'Drop in your niche — we\'ll pull live TikTok data, Reddit discussions, and Google Trends signals.')
+        h('p', { style: { fontFamily: T.fontBody, fontSize: 15, color: T.body, lineHeight: 1.55, margin: 0, maxWidth: 520 } }, 'Drop in your niche — we\'ll pull live TikTok data, Reddit discussions, and Google Trends signals.')
       ),
 
       /* Niche input */
@@ -1092,37 +813,23 @@ function ScannerSetup({ T, niche, setNiche, audience, setAudience, platforms, to
     ),
 
     /* RIGHT — data sources */
-    h('div', { style: { padding: isFull ? '40px 44px' : '32px 32px', overflowY:'auto', display:'flex', flexDirection:'column', gap: 16, background: T.canvas } },
+    h('div', { style: { padding: isMobile ? '20px 16px' : '40px 44px', overflowY: isMobile ? 'visible' : 'auto', display:'flex', flexDirection:'column', gap: 16, background: T.canvas } },
       h('div', { style: { ...eb(T), marginBottom: 4 } }, 'Data sources · tap to include'),
       h('div', { style: { display:'grid', gridTemplateColumns:'1fr 1fr', gap: 12, flex: 1, alignContent:'start' } },
         SCANNER_PLATS.map(pl => {
           const on = platforms.includes(pl.id);
           const platBrand = PLAT[pl.id] || { dot:'#888' };
-          if (isFull) {
-            return h('button', { key: pl.id, onClick: ()=>togglePlat(pl.id), style: { textAlign:'left', background: on ? T.surface : T.surfaceHi, border: 'none', borderRadius: 18, padding: 18, cursor:'pointer', display:'flex', flexDirection:'column', gap: 10, boxShadow: on ? T.sh3 : T.sh1, position:'relative', overflow:'hidden' } },
-              on && h('div', { style: { position:'absolute', inset: -1, borderRadius: 18, border:`2px solid ${T.accent}`, pointerEvents:'none' } }),
-              h('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between' } },
-                h('div', { style: { display:'flex', alignItems:'center', gap: 8 } },
-                  h('span', { style: { width: 10, height: 10, borderRadius:'50%', background: platBrand.dot } }),
-                  h('span', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 600, letterSpacing:'-0.015em', color: T.ink } }, pl.label)
-                ),
-                pl.live && h('span', { style: { fontFamily: T.fontMono, fontSize: 10, color: T.accentDeep, background:`${T.accent}1a`, padding:'3px 8px', borderRadius: 999, letterSpacing:'0.08em', fontWeight: 600 } }, 'LIVE')
-              ),
-              h('div', { className:'serif-i', style: { fontSize: 15, color: T.body, lineHeight: 1.35 } }, pl.desc),
-              h('div', { style: { ...mono(T), color: on ? T.accentDeep : T.mute } }, on ? 'INCLUDED ✓' : 'TAP TO INCLUDE')
-            );
-          }
-          // bridge + editorial — clean form-style
-          return h('button', { key: pl.id, onClick: ()=>togglePlat(pl.id), style: { textAlign:'left', background: on ? T.surface : T.surfaceHi, border:`1px solid ${on ? T.ink : T.hairline}`, borderRadius: T.rTile, padding: 16, cursor:'pointer', display:'flex', flexDirection:'column', gap: 8 } },
+          return h('button', { key: pl.id, onClick: ()=>togglePlat(pl.id), style: { textAlign:'left', background: on ? T.surface : T.surfaceHi, border: 'none', borderRadius: 18, padding: 18, cursor:'pointer', display:'flex', flexDirection:'column', gap: 10, boxShadow: on ? T.sh3 : T.sh1, position:'relative', overflow:'hidden' } },
+            on && h('div', { style: { position:'absolute', inset: -1, borderRadius: 18, border:`2px solid ${T.accent}`, pointerEvents:'none' } }),
             h('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between' } },
               h('div', { style: { display:'flex', alignItems:'center', gap: 8 } },
-                h('span', { style: { width: 8, height: 8, borderRadius:'50%', background: platBrand.dot } }),
-                h('span', { style: { fontFamily: T.fontBody, fontSize: 14, fontWeight: 600, color: T.ink } }, pl.label)
+                h('span', { style: { width: 10, height: 10, borderRadius:'50%', background: platBrand.dot } }),
+                h('span', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 600, letterSpacing:'-0.015em', color: T.ink } }, pl.label)
               ),
-              pl.live && h('span', { style: { fontFamily: T.fontMono, fontSize: 9, color: T.accentDeep, background:`${T.accent}1a`, padding:'2px 7px', borderRadius: 2, letterSpacing:'0.08em', fontWeight: 600 } }, 'LIVE')
+              pl.live && h('span', { style: { fontFamily: T.fontMono, fontSize: 10, color: T.accentDeep, background:`${T.accent}1a`, padding:'3px 8px', borderRadius: 999, letterSpacing:'0.08em', fontWeight: 600 } }, 'LIVE')
             ),
-            h('div', { style: { fontFamily: T.fontBody, fontSize: 12.5, color: T.bodyMid, lineHeight: 1.4 } }, pl.desc),
-            h('div', { style: { ...mono(T), color: on ? T.ink : T.mute } }, on ? 'INCLUDED ✓' : 'TAP TO INCLUDE')
+            h('div', { className:'serif-i', style: { fontSize: 15, color: T.body, lineHeight: 1.35 } }, pl.desc),
+            h('div', { style: { ...mono(T), color: on ? T.accentDeep : T.mute } }, on ? 'INCLUDED ✓' : 'TAP TO INCLUDE')
           );
         })
       )
@@ -1158,7 +865,7 @@ function ScanScreen({ T, statusMsg, platCount }) {
     h('div', { style: { ...eb(T), display:'flex', alignItems:'center', gap: 8 } },
       h(LiveDot, { color: T.accent, size: 7 }), 'SCANNING'
     ),
-    h('h2', { className: T.direction==='editorial' ? 'serif' : '', style: { fontFamily: T.direction==='editorial' ? FS : T.fontBody, fontSize: 36, fontWeight: T.direction==='editorial' ? 400 : 700, letterSpacing:'-0.025em', margin: 0, color: T.ink, textAlign:'center' } }, `Reading ${platCount} data sources`),
+    h('h2', { style: { fontFamily: T.fontBody, fontSize: 36, fontWeight: 700, letterSpacing:'-0.025em', margin: 0, color: T.ink, textAlign:'center' } }, `Reading ${platCount} data sources`),
     h('div', { style: { width: 360, height: 4, borderRadius: 2, background: T.hairline, overflow:'hidden' } },
       h('div', { style: { width: `${pct}%`, height:'100%', background: `linear-gradient(105deg, ${T.g1}, ${T.g2}, ${T.g3})`, transition:'width .15s linear' } })
     ),
@@ -1171,7 +878,7 @@ function EmptyState({ T, niche, onRescan, onBack }) {
   return h('div', { style: { flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding: 48, gap: 16, background: T.canvas } },
     h(Mark, { size: 40 }),
     h('div', { style: eb(T) }, 'No trends yet'),
-    h('h2', { className: T.direction==='editorial' ? 'serif' : '', style: { fontFamily: T.direction==='editorial' ? FS : T.fontBody, fontSize: 28, fontWeight: T.direction==='editorial' ? 400 : 700, letterSpacing:'-0.02em', margin: 0, color: T.ink, textAlign:'center', maxWidth: 540, lineHeight: 1.2 } }, 'No trends cleared the bar yet. Try a broader niche or rescan soon.'),
+    h('h2', { style: { fontFamily: T.fontBody, fontSize: 28, fontWeight: 700, letterSpacing:'-0.02em', margin: 0, color: T.ink, textAlign:'center', maxWidth: 540, lineHeight: 1.2 } }, 'No trends cleared the bar yet. Try a broader niche or rescan soon.'),
     niche && h('div', { style: { ...mono(T), color: T.bodyMid } }, `"${niche}"`),
     h('div', { style: { display:'flex', gap: 10, marginTop: 8 } },
       h('button', { onClick: onRescan, style: btnAccent(T) }, 'Rescan'),
@@ -1185,7 +892,7 @@ function ErrorState({ T, message, niche, onRetry, onBack }) {
   return h('div', { style: { flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding: 48, gap: 16, background: T.canvas } },
     h('div', { style: { width: 60, height: 60, borderRadius:'50%', background: T.surfaceHi, border:`1px solid ${T.hairline}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize: 28, fontWeight: 700, color: '#F43F5E' } }, '!'),
     h('div', { style: eb(T, '#F43F5E') }, 'Scan failed'),
-    h('h2', { className: T.direction==='editorial' ? 'serif' : '', style: { fontFamily: T.direction==='editorial' ? FS : T.fontBody, fontSize: 26, fontWeight: T.direction==='editorial' ? 400 : 700, letterSpacing:'-0.02em', margin: 0, color: T.ink, textAlign:'center', maxWidth: 540, lineHeight: 1.2 } }, 'The scan could not complete.'),
+    h('h2', { style: { fontFamily: T.fontBody, fontSize: 26, fontWeight: 700, letterSpacing:'-0.02em', margin: 0, color: T.ink, textAlign:'center', maxWidth: 540, lineHeight: 1.2 } }, 'The scan could not complete.'),
     message && h('div', { style: { ...mono(T), color: T.bodyMid, maxWidth: 540, textAlign:'center', whiteSpace:'pre-wrap' } }, message),
     h('div', { style: { display:'flex', gap: 10, marginTop: 8 } },
       h('button', { onClick: onRetry, style: btnAccent(T) }, 'Retry scan'),
@@ -1194,8 +901,8 @@ function ErrorState({ T, message, niche, onRetry, onBack }) {
   );
 }
 
-/* RESULTS — direction-aware */
-function ResultScreen({ T, t, trends, niche, savedIds, toggleSave, onBack, onOpenStudio }) {
+/* RESULTS */
+function ResultScreen({ T, isMobile, t, trends, niche, savedIds, toggleSave, onBack, onOpenStudio }) {
   const [idx, setIdx] = useState(0);
   const [planOpen, setPlanOpen] = useState(false);
   const [angle, setAngle] = useState('');
@@ -1211,8 +918,6 @@ function ResultScreen({ T, t, trends, niche, savedIds, toggleSave, onBack, onOpe
   const saved = savedIds.includes(tr.id);
   const platKey = (tr.platform||'').toLowerCase().replace(/\s/g,'_');
   const platBrand = PLAT[platKey] || { dot: '#2DD4BF' };
-  const isEditorial = T.direction === 'editorial';
-  const isFull = T.direction === 'full';
 
   /* Metric tiles — third element flags whether the value is computed from real
      data. Only "Likes / view" is real (and only when a trend is YouTube-backed
@@ -1277,40 +982,8 @@ ${STYLE}`);
     );
   }
 
-  /* Main hero card — visually differs per direction */
+  /* Main hero card */
   function HeroCard() {
-    if (isEditorial) {
-      return h('article', { style: { paddingBottom: 24, borderBottom:`1px solid ${T.hairline}` } },
-        h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 14 } },
-          h('div', { style: { display:'flex', alignItems:'center', gap: 10, flexWrap:'wrap' } },
-            h(EvidenceChips, { T, evidence: tr.evidence }),
-            tr.emerging && h('span', { style: { ...mono(T), color: T.mute } }, tr.emergingLabel)
-          ),
-          h(HeatPill, { T, heat: tr.heat })
-        ),
-        h('h1', { className:'serif', style: { fontSize: 56, fontWeight: 400, letterSpacing:'-0.02em', lineHeight: 1.02, color: T.ink, margin:'8px 0 18px' } }, tr.title),
-        h('div', { style: { padding:'12px 0', borderTop:`1px solid ${T.hairlineSoft}`, borderBottom:`1px solid ${T.hairlineSoft}`, marginBottom: 22 } }, h(Sparkline, { t, height: 56, gradient: true })),
-        h('div', { style: { display:'grid', gridTemplateColumns:`repeat(${metrics.length},1fr)`, gap: 0, marginBottom: 20 } },
-          metrics.map(([k,v,real],i) =>
-            h('div', { key: k, style: { paddingRight: 16, borderRight: i<metrics.length-1 ? `1px solid ${T.hairlineSoft}`:'none', paddingLeft: i>0?16:0 } },
-              h('div', { style: mono(T) }, k.toUpperCase(), !real && h(EstTag)),
-              h('div', { className:'serif', style: { fontSize: 24, letterSpacing:'-0.015em', color: T.ink, marginTop: 4, lineHeight: 1.05 } }, v)
-            )
-          )
-        ),
-        h('div', { style: { marginBottom: 12 } },
-          h('div', { style: { ...mono(T), color: T.body, marginBottom: 8 } }, 'WHY IT\'S TRENDING'),
-          h('p', { className:'serif', style: { fontSize: 22, lineHeight: 1.4, color: T.body, margin: 0, letterSpacing:'-0.005em' } }, tr.hook),
-          !tr.emerging && tr.dominantPlatform && h('div', { style: { ...mono(T), color: T.bodyMid, marginTop: 8 } }, 'Most traction: ' + tr.dominantPlatformLabel)
-        ),
-        tr.bestTimeToPost && tr.postingTimeRationale && h('div', { style: { borderLeft:`2px solid ${T.ink}`, paddingLeft: 14, marginTop: 18 } },
-          h('div', { className:'serif-i', style: { fontSize: 18, color: T.ink } }, tr.bestTimeToPost),
-          h('div', { style: { fontFamily: T.fontBody, fontSize: 14, color: T.body, marginTop: 4 } }, tr.postingTimeRationale)
-        ),
-        AnglesAndTags()
-      );
-    }
-    if (isFull) {
       return h('div', { style: { background: T.surface, borderRadius: 22, padding:'28px 32px', boxShadow: T.sh3, position:'relative', overflow:'hidden' } },
         h('div', { style: { position:'absolute', top:-60, right:-60, width:240, height:240, borderRadius:'50%', background:`radial-gradient(closest-side, ${T.g2}30, transparent)` } }),
         h('div', { style: { position:'relative', display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 16 } },
@@ -1349,54 +1022,18 @@ ${STYLE}`);
         ),
         AnglesAndTags()
       );
-    }
-    /* Bridge */
-    return h('div', { style: { background: T.surface, border:`1px solid ${T.hairline}`, borderRadius: T.rCard, padding:'24px 28px', boxShadow: T.sh2 } },
-      h('div', { style: { display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: 14 } },
-        h('div', { style: { display:'flex', alignItems:'center', gap: 10 } },
-          h(Chip, { T, kind:'solid', color: T.ink }, 'HOT NOW'),
-          isLive && h(Chip, { T, kind:'solid', color: T.accentDeep }, 'LIVE DATA')
-        ),
-        h('div', { style: { display:'flex', alignItems:'center', gap: 14, flexWrap:'wrap', justifyContent:'flex-end' } },
-          h(EvidenceChips, { T, evidence: tr.evidence }),
-          tr.emerging && h('span', { style: { ...mono(T), color: T.mute } }, tr.emergingLabel),
-          h(HeatPill, { T, heat: tr.heat })
-        )
-      ),
-      h('div', { style: { ...eb(T), marginBottom: 10 } }, liveLabel+' · '+new Date().toLocaleTimeString()),
-      h('h2', { style: { fontFamily: T.fontBody, fontSize: 28, fontWeight: 700, letterSpacing:'-0.025em', lineHeight: 1.1, margin:'0 0 18px', color: T.ink } }, tr.title),
-      h('div', { style: { padding:'6px 0', borderTop:`1px solid ${T.hairlineSoft}`, borderBottom:`1px solid ${T.hairlineSoft}`, marginBottom: 18 } }, h(Sparkline, { t, height: 48, gradient: true })),
-      h('div', { style: { display:'grid', gridTemplateColumns:`repeat(${metrics.length},1fr)`, gap: 18, marginBottom: 18 } },
-        metrics.map(([k,v,real]) =>
-          h('div', { key: k },
-            h('div', { style: { ...eb(T), marginBottom: 4 } }, k, !real && h(EstTag)),
-            h('div', { style: { fontFamily: T.fontBody, fontSize: 17, fontWeight: 700, letterSpacing:'-0.02em', color: T.ink } }, v)
-          )
-        )
-      ),
-      h('div', { style: { background: T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding:'12px 14px' } },
-        h('div', { style: { ...eb(T), marginBottom: 5 } }, 'Why it\'s trending'),
-        h('p', { style: { fontFamily: T.fontBody, fontSize: 14.5, color: T.body, lineHeight: 1.55, margin: 0 } }, tr.hook),
-        !tr.emerging && tr.dominantPlatform && h('div', { style: { ...mono(T), color: T.bodyMid, marginTop: 8 } }, 'Most traction: ' + tr.dominantPlatformLabel)
-      ),
-      tr.bestTimeToPost && tr.postingTimeRationale && h('div', { style: { borderLeft:`2px solid ${T.accent}`, paddingLeft: 14, marginTop: 14 } },
-        h('div', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 600, color: T.ink } }, tr.bestTimeToPost),
-        h('div', { style: { fontFamily: T.fontBody, fontSize: 13.5, color: T.body, marginTop: 2 } }, tr.postingTimeRationale)
-      ),
-      AnglesAndTags()
-    );
   }
 
-  return h('div', { style: { display:'grid', gridTemplateColumns:'1fr 300px', height:'100%', overflow:'hidden', width:'100%', maxWidth: 1320, margin:'0 auto' } },
+  return h('div', { style: { display:'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 300px', height: isMobile ? 'auto' : '100%', overflow: isMobile ? 'visible' : 'hidden', width:'100%', maxWidth: 1320, margin:'0 auto' } },
 
     /* MAIN COLUMN */
-    h('div', { style: { padding: isFull ? '28px 44px' : '24px 40px', overflowY:'auto', display:'flex', flexDirection:'column', gap: 22, background: T.canvas } },
+    h('div', { style: { padding: isMobile ? '20px 16px' : '28px 44px', overflowY: isMobile ? 'visible' : 'auto', display:'flex', flexDirection:'column', gap: 22, background: T.canvas } },
 
       /* Top bar — back / niche / count */
       h('div', { style: { display:'flex', alignItems:'center', gap: 12 } },
         h('button', { onClick: onBack, style: { ...btnGhost(T), padding:'4px 0', fontFamily: T.fontMono, fontSize: 11, letterSpacing:'0.06em', color: T.body } }, '← BACK'),
         h('span', { style: mono(T) }, '·'),
-        h('span', { className: isEditorial ? 'serif-i' : '', style: { fontFamily: isEditorial?FS:T.fontMono, fontSize: isEditorial ? 16 : 12, fontStyle: isEditorial?'italic':'normal', color: T.body } }, isEditorial ? `"${niche}"` : `"${niche}"`),
+        h('span', { style: { fontFamily: T.fontMono, fontSize: 12, fontStyle:'normal', color: T.body } }, `"${niche}"`),
         h('span', { style: mono(T) }, '·'),
         h('span', { style: { ...mono(T), color: T.ink } }, `${trends.length} TRENDS`)
       ),
@@ -1442,7 +1079,7 @@ ${STYLE}`);
       /* PLANNER */
       h('div', { style: { border:`1px solid ${T.hairline}`, borderRadius: T.rCard, overflow:'hidden', background: T.surface } },
         h('button', { onClick: ()=>setPlanOpen(o => !o), style: { width:'100%', background: T.surfaceHi, border:'none', color: T.ink, cursor:'pointer', padding:'14px 20px', display:'flex', alignItems:'center', justifyContent:'space-between', fontFamily: T.fontBody, fontSize: 14, fontWeight: 600 } },
-          h('span', null, isEditorial ? h('span', { className:'serif', style:{ fontSize: 17 } }, 'Plan & generate post') : 'Plan & generate post'),
+          h('span', null, 'Plan & generate post'),
           h('span', { style: mono(T) }, planOpen ? '▲' : '▼')
         ),
         planOpen && h('div', { style: { padding:'18px 20px 22px', borderTop:`1px solid ${T.hairline}` } },
@@ -1476,7 +1113,7 @@ ${STYLE}`);
     ),
 
     /* RIGHT RAIL */
-    h('div', { style: { borderLeft:`1px solid ${T.hairline}`, padding:'24px 22px', display:'flex', flexDirection:'column', gap: 14, overflowY:'auto', background: T.canvas } },
+    h('div', { style: { borderLeft: isMobile ? 'none' : `1px solid ${T.hairline}`, borderTop: isMobile ? `1px solid ${T.hairline}` : 'none', padding: isMobile ? '20px 16px' : '24px 22px', display:'flex', flexDirection:'column', gap: 14, overflowY: isMobile ? 'visible' : 'auto', background: T.canvas } },
       h('div', { style: eb(T) }, 'Your move'),
       h('button', { onClick: ()=>toggleSave(tr.id), style: { ...(saved ? btnPrimary(T) : btnAccent(T)), width:'100%', justifyContent:'space-between', padding:'12px 16px' } },
         h('span', null, saved ? 'Saved ✓' : 'Save to ideas'),
@@ -1485,9 +1122,9 @@ ${STYLE}`);
       h('button', { onClick: ()=>setPlanOpen(true), style: { ...btnSec(T), width:'100%', display:'flex', justifyContent:'space-between' } }, 'Generate draft', '↗'),
       h('button', { onClick: ()=>onOpenStudio(tr), style: { ...btnSec(T), width:'100%', display:'flex', justifyContent:'space-between', borderColor: T.accent, color: T.accentDeep } }, 'Build in Studio', '→'),
 
-      h('div', { style: { marginTop:'auto', background: isFull ? `linear-gradient(135deg, ${T.g1}10, ${T.g3}10)` : T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding: 14 } },
+      h('div', { style: { marginTop:'auto', background: `linear-gradient(135deg, ${T.g1}10, ${T.g3}10)`, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding: 14 } },
         h('div', { style: { ...eb(T), marginBottom: 6 } }, 'Caption hook'),
-        h('div', { className: isEditorial ? 'serif-i' : '', style: { fontFamily: isEditorial?FS:T.fontBody, fontSize: isEditorial ? 17 : 13.5, fontStyle: isEditorial ? 'italic':'normal', color: T.ink, lineHeight: 1.5 } }, `"${tr.captionHook||'—'}"`)
+        h('div', { style: { fontFamily: T.fontBody, fontSize: 13.5, fontStyle:'normal', color: T.ink, lineHeight: 1.5 } }, `"${tr.captionHook||'—'}"`)
       )
     )
   );
@@ -1498,7 +1135,7 @@ ${STYLE}`);
    ════════════════════════════════════════════════════════════════════════════ */
 const MUSIC_OPTS = [ { id:'trending', l:'Trending on TikTok/IG' }, { id:'upbeat', l:'Upbeat pop' }, { id:'lofi', l:'Chill lo-fi' }, { id:'hype', l:'Hype / trap' }, { id:'emotional', l:'Emotional / cinematic' }, { id:'viral', l:'Viral sound' }, { id:'original', l:'Original / voiceover' } ];
 
-function StudioTab({ T, prefillTrend, clearPrefill }) {
+function StudioTab({ T, isMobile, prefillTrend, clearPrefill }) {
   const [format, setFormat] = useState('reel');
   const [topic, setTopic] = useState('');
   const [platform, setPlatform] = useState('TikTok');
@@ -1510,7 +1147,6 @@ function StudioTab({ T, prefillTrend, clearPrefill }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [openSec, setOpenSec] = useState(null);
-  const isEditorial = T.direction === 'editorial';
 
   useEffect(() => { if (!prefillTrend) return; setTopic(prefillTrend.title||''); setPlatform(prefillTrend.platform||'TikTok'); setFormat((prefillTrend.format||'').toLowerCase().includes('carousel') ? 'carousel' : 'reel'); clearPrefill(); }, [prefillTrend]);
 
@@ -1548,7 +1184,7 @@ Generate 7-9 slides.`;
   const Sec = ({ id, label, children }) => {
     const open = openSec === id;
     return h('div', { style: { marginBottom: 10, border:`1px solid ${T.hairline}`, borderRadius: T.rCard, overflow:'hidden', background: T.surface } },
-      h('button', { onClick: ()=>setOpenSec(open ? null : id), style: { width:'100%', background: T.surfaceHi, border:'none', color: T.ink, cursor:'pointer', padding:'14px 18px', display:'flex', alignItems:'center', justifyContent:'space-between', fontFamily: isEditorial ? FS : T.fontBody, fontSize: isEditorial ? 17 : 14, fontWeight: isEditorial ? 400 : 600 } },
+      h('button', { onClick: ()=>setOpenSec(open ? null : id), style: { width:'100%', background: T.surfaceHi, border:'none', color: T.ink, cursor:'pointer', padding:'14px 18px', display:'flex', alignItems:'center', justifyContent:'space-between', fontFamily: T.fontBody, fontSize: 14, fontWeight: 600 } },
         label,
         h('span', { style: mono(T) }, open ? '▲' : '▼')
       ),
@@ -1556,12 +1192,12 @@ Generate 7-9 slides.`;
     );
   };
 
-  return h('div', { style: { display:'grid', gridTemplateColumns: result ? '380px 1fr' : '1fr', height:'100%', overflow:'hidden' } },
-    h('div', { style: { borderRight: result ? `1px solid ${T.hairline}` : 'none', overflowY:'auto', padding:'32px 36px 40px', ...(!result && { maxWidth: 620, margin: '0 auto' }), background: T.canvas } },
+  return h('div', { style: { display:'grid', gridTemplateColumns: isMobile ? '1fr' : (result ? '380px 1fr' : '1fr'), height: isMobile ? 'auto' : '100%', overflow: isMobile ? 'visible' : 'hidden' } },
+    h('div', { style: { borderRight: (!isMobile && result) ? `1px solid ${T.hairline}` : 'none', overflowY: isMobile ? 'visible' : 'auto', padding: isMobile ? '20px 16px 32px' : '32px 36px 40px', ...(!result && !isMobile && { maxWidth: 620, margin: '0 auto' }), background: T.canvas } },
       h('div', { style: { marginBottom: 24 } },
         h(Eyebrow, { T, text: 'Content Studio', color: T.accentDeep }),
-        h('h2', { className: isEditorial ? 'serif' : '', style: { fontFamily: isEditorial ? FS : T.fontBody, fontSize: isEditorial ? 44 : 34, fontWeight: isEditorial ? 400 : 700, letterSpacing:'-0.025em', lineHeight: 1.05, margin:'10px 0 8px', color: T.ink } }, 'Build your next post.'),
-        h('p', { className: isEditorial ? 'serif-i' : '', style: { fontFamily: isEditorial ? FS : T.fontBody, fontSize: isEditorial ? 19 : 15, color: T.body, lineHeight: 1.5, margin: 0 } }, 'Describe what you want to make. Get a full production plan — shots, slides, music, and caption.')
+        h('h2', { style: { fontFamily: T.fontBody, fontSize: 34, fontWeight: 700, letterSpacing:'-0.025em', lineHeight: 1.05, margin:'10px 0 8px', color: T.ink } }, 'Build your next post.'),
+        h('p', { style: { fontFamily: T.fontBody, fontSize: 15, color: T.body, lineHeight: 1.5, margin: 0 } }, 'Describe what you want to make. Get a full production plan — shots, slides, music, and caption.')
       ),
       h('div', { style: { marginBottom: 20 } },
         h('div', { style: { ...eb(T), marginBottom: 10 } }, 'Format'),
@@ -1590,11 +1226,11 @@ Generate 7-9 slides.`;
       ),
       h('button', { onClick: generate, disabled: loading, style: { ...btnAccent(T), width:'100%', justifyContent:'center', padding:'14px 0', fontSize: 15, opacity: loading ? 0.5 : 1 } }, loading ? 'Building your plan…' : `Build ${format==='reel'?'Reel':'Carousel'} plan →`)
     ),
-    result && h('div', { style: { overflowY:'auto', padding:'32px 36px 40px', background: T.canvas } },
+    result && h('div', { style: { overflowY: isMobile ? 'visible' : 'auto', padding: isMobile ? '20px 16px 32px' : '32px 36px 40px', borderTop: isMobile ? `1px solid ${T.hairline}` : 'none', background: T.canvas } },
       h('div', { style: { display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom: 22, gap: 12 } },
         h('div', null,
           h(Eyebrow, { T, text: `${result.format==='reel'?'REEL PLAN':'CAROUSEL PLAN'} · ${platform.toUpperCase()}`, color: result.format==='reel' ? '#F43F5E' : T.accentDeep }),
-          h('h2', { className: isEditorial ? 'serif' : '', style: { fontFamily: isEditorial ? FS : T.fontBody, fontSize: isEditorial ? 30 : 24, fontWeight: isEditorial ? 400 : 700, letterSpacing:'-0.022em', margin:'8px 0 5px', color: T.ink } }, result.data.title||topic),
+          h('h2', { style: { fontFamily: T.fontBody, fontSize: 24, fontWeight: 700, letterSpacing:'-0.022em', margin:'8px 0 5px', color: T.ink } }, result.data.title||topic),
           h('p', { style: { fontFamily: T.fontBody, fontSize: 13.5, color: T.body, margin: 0, lineHeight: 1.5 } }, result.data.hook||result.data.logline||result.data.swipeHook)
         ),
         h('div', { style: { display:'flex', gap: 6, flexShrink: 0 } },
@@ -1621,7 +1257,7 @@ Generate 7-9 slides.`;
         ),
         h(Sec, { id:'music', label:'Music & audio' },
           h('div', { style: { background: T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding: 14, marginTop: 12, marginBottom: 12 } },
-            h('div', { className: isEditorial?'serif':'', style: { fontFamily: isEditorial?FS:T.fontBody, fontSize: isEditorial?20:15, fontWeight: 600, color: T.ink, marginBottom: 5 } }, result.data.music?.recommendation||'—'),
+            h('div', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 600, color: T.ink, marginBottom: 5 } }, result.data.music?.recommendation||'—'),
             h('div', { style: { fontFamily: T.fontBody, fontSize: 13, color: T.body, lineHeight: 1.55, marginBottom: 10 } }, result.data.music?.reasoning),
             h('div', { style: { ...eb(T), marginBottom: 6 } }, 'Search on TikTok / Instagram'),
             h('div', { style: { display:'flex', gap: 6, flexWrap:'wrap' } }, (result.data.music?.searchTerms||[]).map((s,i) => h('span', { key: i, style: { background: T.surface, border:`1px solid ${T.hairline}`, borderRadius: T.rInput, padding:'4px 10px', fontFamily: T.fontMono, fontSize: 11, color: T.ink } }, `↗ ${s}`)))
@@ -1645,7 +1281,7 @@ Generate 7-9 slides.`;
                   h('span', { style: { width: 26, height: 26, borderRadius: 4, background: T.ink, display:'flex', alignItems:'center', justifyContent:'center', fontFamily: T.fontBody, fontSize: 12, fontWeight: 700, color: T.onPrimary, flexShrink: 0 } }, s.number),
                   h('span', { style: eb(T, T.body) }, (s.role||'').toUpperCase())
                 ),
-                h('div', { className: isEditorial?'serif':'', style: { fontFamily: isEditorial?FS:T.fontBody, fontSize: isEditorial?20:15, fontWeight: isEditorial?400:600, letterSpacing:'-0.015em', color: T.ink, marginBottom: 4 } }, s.headline),
+                h('div', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 600, letterSpacing:'-0.015em', color: T.ink, marginBottom: 4 } }, s.headline),
                 s.subtext && h('div', { style: { fontFamily: T.fontBody, fontSize: 13, color: T.body, marginBottom: 8, lineHeight: 1.4 } }, s.subtext),
                 h('div', { style: { display:'grid', gridTemplateColumns:'1fr 1fr', gap: 8, marginTop: 8, paddingTop: 8, borderTop:`1px solid ${T.hairlineSoft}` } },
                   h('div', null, h('div', { style: { ...eb(T), marginBottom: 3 } }, 'Visual'), h('div', { style: { fontFamily: T.fontBody, fontSize: 12, color: T.body, lineHeight: 1.4 } }, s.visual)),
@@ -1666,7 +1302,7 @@ Generate 7-9 slides.`;
       ),
       h(Sec, { id:'caption', label:'Caption & hashtags' },
         h('div', { style: { background: T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding: 16, marginTop: 12, marginBottom: 10 } },
-          h('div', { className: isEditorial?'serif':'', style: { fontFamily: isEditorial?FS:T.fontBody, fontSize: isEditorial?22:15, fontWeight: 600, color: T.ink, marginBottom: 6 } }, result.data.caption?.hook),
+          h('div', { style: { fontFamily: T.fontBody, fontSize: 15, fontWeight: 600, color: T.ink, marginBottom: 6 } }, result.data.caption?.hook),
           h('div', { style: { fontFamily: T.fontBody, fontSize: 13.5, color: T.body, lineHeight: 1.65, marginBottom: 10, whiteSpace:'pre-wrap' } }, result.data.caption?.body),
           h('div', { style: { fontFamily: T.fontBody, fontSize: 13, color: T.ink, fontWeight: 600, marginBottom: 12 } }, result.data.caption?.cta),
           h('div', { style: { display:'flex', flexWrap:'wrap', gap: 5 } }, (result.data.caption?.hashtags||[]).map((tag,i) => h('span', { key: i, style: { background: T.surface, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding:'3px 10px', fontFamily: T.fontMono, fontSize: 11, color: T.body } }, tag)))
@@ -1675,7 +1311,7 @@ Generate 7-9 slides.`;
       ),
       result.data.postingTip && h('div', { style: { background:`linear-gradient(105deg, ${T.g1}10, ${T.g3}10)`, border:`1px solid ${T.g2}30`, borderRadius: T.rInput, padding:'14px 16px', marginTop: 8 } },
         h('div', { style: { ...eb(T), marginBottom: 6 } }, '⚡ Posting tip'),
-        h('div', { className: isEditorial?'serif-i':'', style: { fontFamily: isEditorial?FS:T.fontBody, fontSize: isEditorial?17:13.5, color: T.ink, lineHeight: 1.5 } }, result.data.postingTip)
+        h('div', { style: { fontFamily: T.fontBody, fontSize: 13.5, color: T.ink, lineHeight: 1.5 } }, result.data.postingTip)
       )
     )
   );
@@ -1684,10 +1320,9 @@ Generate 7-9 slides.`;
 /* ════════════════════════════════════════════════════════════════════════════
    CALENDAR
    ════════════════════════════════════════════════════════════════════════════ */
-function CalendarTab({ T, niche, platforms }) {
+function CalendarTab({ T, isMobile, niche, platforms }) {
   const [items, setItems] = useState(store.get('cp_calendar', []));
   const [loading, setLoading] = useState(false);
-  const isEditorial = T.direction==='editorial';
   const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const today = new Date(); today.setHours(0,0,0,0);
   const start = new Date(today); start.setDate(today.getDate() - today.getDay());
@@ -1711,15 +1346,15 @@ Return ONLY a JSON array: [{"day":"Monday","date":"2026-05-25","platform":"TikTo
 
   const fmtAccent = (i) => FORMAT_ACCENTS[i % FORMAT_ACCENTS.length];
 
-  return h('div', { style: { padding:'32px 40px', overflowY:'auto', height:'100%', background: T.canvas } },
+  return h('div', { style: { padding: isMobile ? '20px 16px' : '32px 40px', overflowY: isMobile ? 'visible' : 'auto', height: isMobile ? 'auto' : '100%', background: T.canvas } },
     h('div', { style: { display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginBottom: 24, gap: 16 } },
       h('div', null,
         h(Eyebrow, { T, text: 'Content calendar' }),
-        h('h2', { className: isEditorial?'serif':'', style: { fontFamily: isEditorial?FS:T.fontBody, fontSize: isEditorial?42:30, fontWeight: isEditorial?400:700, letterSpacing:'-0.025em', margin:'8px 0 0', color: T.ink } }, today.toLocaleDateString('en-US',{ month:'long', year:'numeric' }))
+        h('h2', { style: { fontFamily: T.fontBody, fontSize: 30, fontWeight: 700, letterSpacing:'-0.025em', margin:'8px 0 0', color: T.ink } }, today.toLocaleDateString('en-US',{ month:'long', year:'numeric' }))
       ),
       h('button', { onClick: autoFill, disabled: loading, style: { ...btnAccent(T), opacity: loading ? 0.5 : 1 } }, loading ? 'Generating…' : '⚡ Auto-fill week →')
     ),
-    h('div', { style: { display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap: 10 } },
+    h('div', { style: { display:'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(7,1fr)', gap: 10 } },
       Array.from({ length: 7 }, (_,i) => {
         const d = new Date(start); d.setDate(start.getDate() + i);
         const ds = d.toISOString().split('T')[0];
@@ -1738,18 +1373,17 @@ Return ONLY a JSON array: [{"day":"Monday","date":"2026-05-25","platform":"TikTo
 /* ════════════════════════════════════════════════════════════════════════════
    IDEAS BANK
    ════════════════════════════════════════════════════════════════════════════ */
-function IdeasTab({ T }) {
+function IdeasTab({ T, isMobile }) {
   const [ideas, setIdeas] = useState(store.get('cp_ideas', []));
-  const isEditorial = T.direction==='editorial';
   const del = id => { const n = ideas.filter(i => i.id !== id); store.set('cp_ideas', n); setIdeas(n); };
-  if (!ideas.length) return h('div', { style: { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap: 16, background: T.canvas, textAlign:'center', padding: 40 } },
+  if (!ideas.length) return h('div', { style: { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight: isMobile ? '60vh' : '100%', height: isMobile ? 'auto' : '100%', gap: 16, background: T.canvas, textAlign:'center', padding: 40 } },
     h(Mark, { size: 56 }),
     h('div', { style: { ...mono(T), color: T.bodyMid } }, 'IDEAS BANK · EMPTY'),
-    h('div', { className: isEditorial?'serif':'', style: { fontFamily: isEditorial?FS:T.fontBody, fontSize: isEditorial?28:18, fontWeight: isEditorial?400:600, color: T.ink, maxWidth: 460, letterSpacing:'-0.015em' } }, 'Generate posts from trend cards or Studio. They\'ll show up here, ready to schedule.'),
+    h('div', { style: { fontFamily: T.fontBody, fontSize: 18, fontWeight: 600, color: T.ink, maxWidth: 460, letterSpacing:'-0.015em' } }, 'Generate posts from trend cards or Studio. They\'ll show up here, ready to schedule.'),
   );
-  return h('div', { style: { padding:'32px 40px', height:'100%', overflowY:'auto', background: T.canvas } },
+  return h('div', { style: { padding: isMobile ? '20px 16px' : '32px 40px', height: isMobile ? 'auto' : '100%', overflowY: isMobile ? 'visible' : 'auto', background: T.canvas } },
     h(Eyebrow, { T, text: 'Ideas bank' }),
-    h('h2', { className: isEditorial?'serif':'', style: { fontFamily: isEditorial?FS:T.fontBody, fontSize: isEditorial?42:30, fontWeight: isEditorial?400:700, letterSpacing:'-0.025em', margin:'8px 0 24px', color: T.ink } }, `${ideas.length} saved ${ideas.length===1?'idea':'ideas'}`),
+    h('h2', { style: { fontFamily: T.fontBody, fontSize: 30, fontWeight: 700, letterSpacing:'-0.025em', margin:'8px 0 24px', color: T.ink } }, `${ideas.length} saved ${ideas.length===1?'idea':'ideas'}`),
     h('div', { style: { display:'flex', flexDirection:'column', gap: 14 } },
       ideas.slice().reverse().map(idea => h('div', { key: idea.id, style: { background: T.surface, border:`1px solid ${T.hairline}`, borderRadius: T.rCard, padding:'18px 20px', boxShadow: T.sh1 } },
         h('div', { style: { display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap: 14, marginBottom: 10 } },
@@ -1758,7 +1392,7 @@ function IdeasTab({ T }) {
               h(Chip, { T }, idea.platform),
               h(Chip, { T }, idea.format)
             ),
-            h('div', { className: isEditorial?'serif':'', style: { fontFamily: isEditorial?FS:T.fontBody, fontSize: isEditorial?22:16, fontWeight: isEditorial?400:600, letterSpacing:'-0.015em', color: T.ink } }, idea.title)
+            h('div', { style: { fontFamily: T.fontBody, fontSize: 16, fontWeight: 600, letterSpacing:'-0.015em', color: T.ink } }, idea.title)
           ),
           h('div', { style: { display:'flex', gap: 6 } },
             h('button', { onClick: ()=>navigator.clipboard.writeText(idea.content||''), style: btnSec(T) }, 'Copy'),
@@ -1773,34 +1407,33 @@ function IdeasTab({ T }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   DIRECTION SWITCHER — pinned bottom-right
-   ════════════════════════════════════════════════════════════════════════════ */
-function DirectionSwitcher({ direction, setDirection, T }) {
-  const opts = [
-    { id:'bridge',    label:'Bridge',    sub:'Working tool' },
-    { id:'full',      label:'Full',      sub:'Marketing DNA' },
-    { id:'editorial', label:'Editorial', sub:'Magazine' },
-  ];
-  return h('div', { style: { position:'fixed', bottom: 20, right: 20, zIndex: 90, background: T.surface, border:`1px solid ${T.hairline}`, borderRadius: 999, padding: 4, boxShadow: T.sh4, display:'flex', gap: 2 } },
-    opts.map(o => {
-      const on = direction === o.id;
-      return h('button', { key: o.id, onClick: ()=>setDirection(o.id), title: o.sub, style: { background: on ? T.ink : 'transparent', color: on ? T.onPrimary : T.body, border:'none', cursor:'pointer', fontFamily: T.fontBody, fontSize: 13, fontWeight: 600, padding:'8px 14px', borderRadius: 999, letterSpacing:'-0.005em', display:'flex', alignItems:'center', gap: 6 } },
-        on && h('span', { className:'gt-bg', style:{ width:6, height:6, borderRadius:'50%' } }),
-        o.label
-      );
-    })
-  );
-}
-
-/* ════════════════════════════════════════════════════════════════════════════
    APP
    ════════════════════════════════════════════════════════════════════════════ */
 function App() {
-  const [direction, setDirection] = useState('full'); // locked to 'full' for beta
   const [dark, setDark] = useState(store.get('cadence_dark', false));
-  const T = useMemo(() => themeFor(direction, dark), [direction, dark]);
-  useEffect(() => { store.set('cadence_direction', 'full'); }, []);
+  const T = useMemo(() => themeFor(dark), [dark]);
   useEffect(() => { store.set('cadence_dark', dark); }, [dark]);
+
+  // ── Responsive ─────────────────────────────────────────────────────────────
+  // Below the mobile breakpoint the shell switches from a fixed-viewport desktop
+  // layout to normal document flow: the page itself scrolls and internal panes no
+  // longer lock to viewport height / hide overflow. (Multi-column grids collapse to
+  // a single column via the !important media queries in the <style> block.)
+  const MOBILE_Q = '(max-width: 900px)';
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia(MOBILE_Q).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_Q);
+    const onChange = () => setIsMobile(mq.matches);
+    onChange();
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else mq.addListener(onChange);
+    window.addEventListener('orientationchange', onChange);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+      else mq.removeListener(onChange);
+      window.removeEventListener('orientationchange', onChange);
+    };
+  }, []);
 
   const [tab, setTab] = useState('home');
   const [scanPhase, setScanPhase] = useState('setup');
@@ -2030,26 +1663,37 @@ ${youtubeVideos.length ? `There ARE ${youtubeVideos.length} real YouTube videos 
     }
   };
 
+  // On mobile, let the document flow + scroll naturally; on desktop keep the
+  // fixed-viewport pane layout. These objects swap the height/overflow chain.
+  const mainWrap = isMobile
+    ? { flex: 1, minHeight: 0, overflow:'visible', display:'flex', flexDirection:'column' }
+    : { flex: 1, height:'calc(100vh - 65px)', overflow:'hidden', display:'flex', flexDirection:'column' };
+  const tabWrap = isMobile
+    ? { flex: 1, overflow:'visible' }
+    : { flex: 1, overflow:'hidden' };
+  const scannerWrap = isMobile
+    ? { flex:1, overflow:'visible', display:'flex', flexDirection:'column' }
+    : { flex:1, overflow:'hidden', display:'flex', flexDirection:'column' };
+
   return h('div', { style: { position:'relative', background: T.canvas, color: T.ink, fontFamily: T.fontBody, minHeight:'100vh', display:'flex', flexDirection:'column' } },
     h(TopBar, { T, tab, setTab, savedCount: savedIds.length, showKeys: ()=>setShowKeys(true), dark, setDark }),
 
     tab==='home'
       ? h(LandingPage, { T, setTab, setNiche, niche, onScan: runScan })
-      : h('div', { style: { flex: 1, height:'calc(100vh - 65px)', overflow:'hidden', display:'flex', flexDirection:'column' } },
-          tab==='scanner' && h('div', { key:'sc', style: { flex:1, overflow:'hidden', display:'flex', flexDirection:'column' } },
-            scanPhase==='setup'  && h(ScannerSetup, { T, niche, setNiche, audience, setAudience, platforms, togglePlat, formats, toggleFmt, tone, setTone, extra, setExtra, onScan: runScan }),
+      : h('div', { style: mainWrap },
+          tab==='scanner' && h('div', { key:'sc', style: scannerWrap },
+            scanPhase==='setup'  && h(ScannerSetup, { T, isMobile, niche, setNiche, audience, setAudience, platforms, togglePlat, formats, toggleFmt, tone, setTone, extra, setExtra, onScan: runScan }),
             scanPhase==='scan'   && h(ScanScreen, { T, statusMsg, platCount: platforms.length }),
             scanPhase==='empty'  && h(EmptyState, { T, niche, onRescan: ()=>runScan(), onBack: ()=>setScanPhase('setup') }),
             scanPhase==='error'  && h(ErrorState, { T, message: scanError, niche, onRetry: ()=>runScan(), onBack: ()=>setScanPhase('setup') }),
-            scanPhase==='result' && h(ResultScreen, { T, trends, niche, savedIds, toggleSave, onBack: ()=>setScanPhase('setup'), onOpenStudio: (tr)=>{ setStudioTrend(tr); setTab('studio'); } })
+            scanPhase==='result' && h(ResultScreen, { T, isMobile, trends, niche, savedIds, toggleSave, onBack: ()=>setScanPhase('setup'), onOpenStudio: (tr)=>{ setStudioTrend(tr); setTab('studio'); } })
           ),
-          tab==='studio'   && h('div', { key:'st', style: { flex:1, overflow:'hidden' } }, h(StudioTab,   { T, prefillTrend: studioTrend, clearPrefill: ()=>setStudioTrend(null) })),
-          tab==='calendar' && h('div', { key:'ca', style: { flex:1, overflow:'hidden' } }, h(CalendarTab, { T, niche, platforms })),
-          tab==='ideas'    && h('div', { key:'id', style: { flex:1, overflow:'hidden' } }, h(IdeasTab,    { T }))
+          tab==='studio'   && h('div', { key:'st', style: tabWrap }, h(StudioTab,   { T, isMobile, prefillTrend: studioTrend, clearPrefill: ()=>setStudioTrend(null) })),
+          tab==='calendar' && h('div', { key:'ca', style: tabWrap }, h(CalendarTab, { T, isMobile, niche, platforms })),
+          tab==='ideas'    && h('div', { key:'id', style: tabWrap }, h(IdeasTab,    { T, isMobile }))
         ),
 
-    showKeys && h(KeysModal, { T, onClose: ()=>setShowKeys(false) }),
-    h(DirectionSwitcher, { direction, setDirection, T })
+    showKeys && h(KeysModal, { T, onClose: ()=>setShowKeys(false) })
   );
 }
 
