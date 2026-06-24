@@ -269,6 +269,7 @@ function parseVideos(raw) {
       views: s.play_count || s.views || 0,
       likes: s.digg_count || s.likes || 0,
       createTime: v.create_time || v.createTime || 0,
+      url: v.aweme_id ? `https://www.tiktok.com/@${v.author?.unique_id || 'tiktok'}/video/${v.aweme_id}` : null,
     };
   }).filter(v => v.views > 0 || v.likes > 0);
 }

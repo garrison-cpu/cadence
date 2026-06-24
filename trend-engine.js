@@ -468,7 +468,7 @@ async function tiktokBaseline(niche, tiktokVideos, paidHistoryAdapter) {
     signal: v.desc,
     value: v.views,
     engagementRate: v.views > 0 ? v.likes / v.views : 0,
-    meta: { likes: v.likes },
+    meta: { url: v.url, likes: v.likes, createTime: v.createTime },
   }));
 
   // OPTIONAL: backfill baseline from a paid provider keyed by hashtag.
