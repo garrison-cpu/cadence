@@ -307,6 +307,7 @@ async function fetchRedditServer(niche, window = 'week') {
           score: c.data.score || 0,
           comments: c.data.num_comments || 0,
           subreddit: c.data.subreddit || q,
+          createdUtc: c.data.created_utc || 0,
           url: `https://reddit.com${c.data.permalink}`,
         })).filter(p => p.score > 0);
         break;
@@ -323,6 +324,7 @@ async function fetchRedditServer(niche, window = 'week') {
           score: c.data.score || 0,
           comments: c.data.num_comments || 0,
           subreddit: c.data.subreddit || '',
+          createdUtc: c.data.created_utc || 0,
           url: `https://reddit.com${c.data.permalink}`,
         }))].slice(0, 10);
       }
@@ -407,6 +409,7 @@ async function pullYouTube(niche) {
         viewCount: parseInt(s.viewCount, 10) || 0,
         likeCount: parseInt(s.likeCount, 10) || 0,
         commentCount: parseInt(s.commentCount, 10) || 0,
+        publishedAt: it.snippet?.publishedAt || '',
         url: it.id ? 'https://www.youtube.com/watch?v=' + it.id : null,
       };
     }).filter(v => v.viewCount > 0 || v.likeCount > 0)
@@ -422,7 +425,7 @@ async function pullYouTube(niche) {
 // ── Scan: Cadence decides the trends, Claude writes the creative layer ───────
 app.post('/api/scan', async (req, res) => {
   try {
-    const { niche, audience, platforms, formats, tone, extra, profile, fresh } = req.body || {};
+    const { niche, audience, platforms, formats, tone, extra, profile, fresh, tz } = req.body || {};
     if (!niche || !String(niche).trim()) {
       return res.status(400).json({ error: { message: 'Missing niche.' } });
     }
@@ -442,6 +445,7 @@ app.post('/api/scan', async (req, res) => {
       platforms: [...plats].sort(),
       formats: [...(formats || [])].sort(),
       profile: profile || null,
+      tz: tz || 'UTC',
     });
     let hash = 5381;
     for (let i = 0; i < keyInput.length; i++) hash = ((hash << 5) + hash + keyInput.charCodeAt(i)) | 0;
@@ -473,6 +477,7 @@ app.post('/api/scan', async (req, res) => {
       fetchInstagram,
       youtubeVideos,
       claudeCall: claudeCallText,
+      tz: tz || 'UTC',
       onStatus: () => {},
     });
     console.log(`[scan] done: ${(result.trends || []).length} themes${result.note ? ' (' + result.note + ')' : ''}`);

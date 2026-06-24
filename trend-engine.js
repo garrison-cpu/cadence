@@ -453,7 +453,7 @@ async function redditBaseline(niche, fetchReddit) {
       signal: p.title,
       value: p.score,
       engagementRate: p.score > 0 ? p.comments / p.score : 0,
-      meta: { subreddit: p.subreddit, url: p.url },
+      meta: { subreddit: p.subreddit, url: p.url, createdUtc: p.createdUtc },
     })),
     seed: [],
   };
@@ -488,7 +488,7 @@ async function youtubeBaseline(niche, youtubeVideos) {
     signal: v.title,
     value: v.viewCount,
     engagementRate: v.viewCount > 0 ? v.likeCount / v.viewCount : 0,
-    meta: { url: v.url, likeCount: v.likeCount },
+    meta: { url: v.url, likeCount: v.likeCount, publishedAt: v.publishedAt },
   }));
   return { observations, seed: [] };
 }
@@ -512,6 +512,44 @@ async function instagramBaseline(niche, fetchInstagram) {
     };
   });
   return { observations, seed: [] };
+}
+
+// --- Best time to post: niche-level window computed from the real publish
+//     timestamps of every post pulled this scan, rendered in the viewer's tz.
+//     Returns null under 3 valid timestamps so the tile stays hidden — never
+//     fabricated.
+function computeBestTime(timestampsMs, tz) {
+  const ts = (timestampsMs || []).filter(n => Number.isFinite(n) && n > 0);
+  if (ts.length < 3) return null;
+  const zone = tz || 'UTC';
+  const hourFmt = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', hour12: false });
+  const dayFmt  = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'short' });
+  const hourCounts = new Array(24).fill(0);
+  const dayCounts = {};
+  for (const n of ts) {
+    const d = new Date(n);
+    let h = parseInt(hourFmt.format(d), 10); if (h === 24) h = 0;
+    if (Number.isFinite(h)) hourCounts[h]++;
+    const wd = dayFmt.format(d);
+    dayCounts[wd] = (dayCounts[wd] || 0) + 1;
+  }
+  let bestStart = 0, bestSum = -1;
+  for (let h = 0; h < 24; h++) {
+    const sum = hourCounts[h] + hourCounts[(h + 1) % 24];
+    if (sum > bestSum) { bestSum = sum; bestStart = h; }
+  }
+  const endH = (bestStart + 2) % 24;
+  const days = Object.entries(dayCounts).sort((a, b) => b[1] - a[1]);
+  const topDays = [];
+  if (days.length && days[0][1] / ts.length >= 0.34) topDays.push(days[0][0]);
+  if (days[1] && days[1][1] === days[0][1] && topDays.length) topDays.push(days[1][0]);
+  const fmtH = h => { const ap = h < 12 ? 'AM' : 'PM'; const hr = h % 12 === 0 ? 12 : h % 12; return hr + ' ' + ap; };
+  const dayStr = topDays.length ? topDays.join(' & ') + ', ' : '';
+  const tzShort = zone === 'UTC' ? 'UTC' : zone.split('/').pop().replace(/_/g, ' ');
+  return {
+    label: `${dayStr}${fmtH(bestStart)}–${fmtH(endH)}`,
+    rationale: `When the ${ts.length} top posts in this niche went live (${tzShort}).`,
+  };
 }
 
 
@@ -856,6 +894,7 @@ async function runScan(opts) {
     youtubeVideos = [],         // from existing /api/youtube search+videos pull
     fetchInstagram = null,      // Apify Instagram scraper wrapper, or null
     claudeCall,                 // from existing app
+    tz = 'UTC',                 // viewer timezone for best-time rendering
     onStatus = () => {},
   } = opts;
 
@@ -887,6 +926,23 @@ async function runScan(opts) {
 
   await Promise.allSettled(jobs);
 
+  // Niche-level best-time window: gather every post timestamp across platforms,
+  // normalizing units to epoch ms (tiktok/reddit are seconds, youtube/instagram
+  // are ISO strings), then compute one window for the whole scan.
+  const allTs = [];
+  for (const [, data] of Object.entries(perPlatform)) {
+    for (const o of (data.observations || [])) {
+      const m = o.meta || {};
+      let t = 0;
+      if (m.createTime) t = m.createTime * 1000;
+      else if (m.createdUtc) t = m.createdUtc * 1000;
+      else if (m.publishedAt) t = Date.parse(m.publishedAt) || 0;
+      else if (m.timestamp) t = (typeof m.timestamp === 'number' ? m.timestamp * (m.timestamp < 1e12 ? 1000 : 1) : Date.parse(m.timestamp)) || 0;
+      if (t) allTs.push(t);
+    }
+  }
+  const bestTime = computeBestTime(allTs, tz);
+
   // Cadence scores every signal from real numbers (no Claude)
   onStatus('scoring momentum…');
   const signals = await detectTrends(store, niche, perPlatform);
@@ -914,6 +970,8 @@ async function runScan(opts) {
   for (const t of enriched) {
     t.searchInterest = searchInterest;
     t.searchInterestLabel = searchInterestLabel;
+    if (bestTime) { t.bestTimeToPost = bestTime.label; t.bestTimeToPostReal = true; t.postingTimeRationale = bestTime.rationale; }
+    else { t.bestTimeToPostReal = false; }
   }
 
   return { trends: enriched };

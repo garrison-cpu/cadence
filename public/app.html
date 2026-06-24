@@ -406,7 +406,11 @@ function mapEngineTrend(t, i) {
     // these stay model/heuristic estimates — left blank so they read "—" / "est."
     competition: '—',
     searchVolume: '—',
-    bestTimeToPost: '',
+    bestTimeToPost: t.bestTimeToPost || '',
+    bestTimeToPostReal: !!t.bestTimeToPostReal,
+    postingTimeRationale: t.postingTimeRationale || '',
+    searchInterest: t.searchInterest ?? null,
+    searchInterestLabel: t.searchInterestLabel || null,
     // legacy per-platform link lists no longer populated (evidence chips replace them)
     realVideos: [],
     redditPosts: [],
@@ -1515,7 +1519,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ niche: scanNiche, audience, platforms, formats, tone, extra, profile: store.get('cp_brand_profile', null) })
+        body: JSON.stringify({ niche: scanNiche, audience, platforms, formats, tone, extra, profile: store.get('cp_brand_profile', null), tz: Intl.DateTimeFormat().resolvedOptions().timeZone })
       });
       if (!r.ok) throw new Error('scan HTTP ' + r.status);
       const data = await r.json();
