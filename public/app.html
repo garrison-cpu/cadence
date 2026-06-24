@@ -1221,7 +1221,9 @@ function ResultScreen({ T, t, trends, niche, savedIds, toggleSave, onBack, onOpe
   const metrics = [
     ['Likes / view', tr.engagementRate||'—', !!tr.engagementRateReal],
     ['Competition',  tr.competition||'—',    false],
-    ['Search vol.',  tr.searchVolume||'—',   false],
+    // Search interest is a real measured Google Trends value (Low/Medium/High).
+    // Only show the tile when we have one this scan — never render a placeholder.
+    ...(tr.searchInterestLabel ? [['Search interest', tr.searchInterestLabel, true]] : []),
     ['Best time',    tr.bestTimeToPost||'—', false],
   ];
   const EstTag = () => h('span', { style: { fontFamily: T.fontMono, fontSize: 9, letterSpacing:'0.07em', color: T.mute, border:`1px solid ${T.hairline}`, borderRadius: 4, padding:'0 4px', marginLeft: 6, textTransform:'uppercase', verticalAlign:'middle' } }, 'est.');
@@ -1288,9 +1290,9 @@ ${STYLE}`);
         ),
         h('h1', { className:'serif', style: { fontSize: 56, fontWeight: 400, letterSpacing:'-0.02em', lineHeight: 1.02, color: T.ink, margin:'8px 0 18px' } }, tr.title),
         h('div', { style: { padding:'12px 0', borderTop:`1px solid ${T.hairlineSoft}`, borderBottom:`1px solid ${T.hairlineSoft}`, marginBottom: 22 } }, h(Sparkline, { t, height: 56, gradient: true })),
-        h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap: 0, marginBottom: 20 } },
+        h('div', { style: { display:'grid', gridTemplateColumns:`repeat(${metrics.length},1fr)`, gap: 0, marginBottom: 20 } },
           metrics.map(([k,v,real],i) =>
-            h('div', { key: k, style: { paddingRight: 16, borderRight: i<3 ? `1px solid ${T.hairlineSoft}`:'none', paddingLeft: i>0?16:0 } },
+            h('div', { key: k, style: { paddingRight: 16, borderRight: i<metrics.length-1 ? `1px solid ${T.hairlineSoft}`:'none', paddingLeft: i>0?16:0 } },
               h('div', { style: mono(T) }, k.toUpperCase(), !real && h(EstTag)),
               h('div', { className:'serif', style: { fontSize: 24, letterSpacing:'-0.015em', color: T.ink, marginTop: 4, lineHeight: 1.05 } }, v)
             )
@@ -1325,7 +1327,7 @@ ${STYLE}`);
         h('div', { style: { ...eb(T), marginBottom: 8 } }, liveLabel+' · '+new Date().toLocaleTimeString()),
         h('h2', { className:'serif', style: { fontSize: 36, fontWeight: 400, letterSpacing:'-0.02em', lineHeight: 1.05, margin:'0 0 22px', color: T.ink, position:'relative' } }, tr.title),
         h('div', { style: { padding:'10px 0', marginBottom: 20 } }, h(Sparkline, { t, height: 64, gradient: true })),
-        h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap: 18, marginBottom: 20, position:'relative' } },
+        h('div', { style: { display:'grid', gridTemplateColumns:`repeat(${metrics.length},1fr)`, gap: 18, marginBottom: 20, position:'relative' } },
           metrics.map(([k,v,real]) =>
             h('div', { key: k, style: { padding:'12px 14px', background: T.surfaceHi, borderRadius: 14 } },
               h('div', { style: { ...eb(T), marginBottom: 5 } }, k, !real && h(EstTag)),
@@ -1364,7 +1366,7 @@ ${STYLE}`);
       h('div', { style: { ...eb(T), marginBottom: 10 } }, liveLabel+' · '+new Date().toLocaleTimeString()),
       h('h2', { style: { fontFamily: T.fontBody, fontSize: 28, fontWeight: 700, letterSpacing:'-0.025em', lineHeight: 1.1, margin:'0 0 18px', color: T.ink } }, tr.title),
       h('div', { style: { padding:'6px 0', borderTop:`1px solid ${T.hairlineSoft}`, borderBottom:`1px solid ${T.hairlineSoft}`, marginBottom: 18 } }, h(Sparkline, { t, height: 48, gradient: true })),
-      h('div', { style: { display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap: 18, marginBottom: 18 } },
+      h('div', { style: { display:'grid', gridTemplateColumns:`repeat(${metrics.length},1fr)`, gap: 18, marginBottom: 18 } },
         metrics.map(([k,v,real]) =>
           h('div', { key: k },
             h('div', { style: { ...eb(T), marginBottom: 4 } }, k, !real && h(EstTag)),

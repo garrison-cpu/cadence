@@ -419,9 +419,14 @@ async function googleTrendsBaseline(niche, fetchTrendSeries) {
   const observations = [];
   const seed = [];
 
+  // niche-level search interest = most recent non-partial point (0-100), or null
+  // when there's no Trends data this scan. Surfaced to the UI; never invented.
+  let searchInterest = null;
+
   // niche term: keep emitting its interest series as seeded history + a current obs
   if (series.length) {
     const latest = series[series.length - 1];
+    searchInterest = Number.isFinite(latest.value0to100) ? latest.value0to100 : null;
     observations.push({ signal: niche, value: latest.value0to100 });
     for (const p of series.slice(-CONFIG.baselineWindowDays)) {
       seed.push({ signal: niche, value: p.value0to100, ts: new Date(p.date).getTime() });
@@ -436,7 +441,7 @@ async function googleTrendsBaseline(niche, fetchTrendSeries) {
     if (t.topic && t.value > 0) observations.push({ signal: t.topic, value: t.value });
   }
 
-  return { observations, seed };
+  return { observations, seed, searchInterest };
 }
 
 // --- Reddit: pull "hot now" and "top of month" so we get current vs a
@@ -856,7 +861,26 @@ async function runScan(opts) {
   onStatus('writing angles…');
   const enriched = await explainTrendsWithClaude(claudeCall, niche, audience, themes);
 
+  // Niche-level Search Interest from Google Trends (most recent non-partial point,
+  // 0-100). Same value for every theme in this scan — it's a niche property, not a
+  // per-theme one. null when there's no Trends data this scan (never invented).
+  const searchInterest = perPlatform.google_trends?.searchInterest ?? null;
+  const searchInterestLabel = bucketSearchInterest(searchInterest);
+  for (const t of enriched) {
+    t.searchInterest = searchInterest;
+    t.searchInterestLabel = searchInterestLabel;
+  }
+
   return { trends: enriched };
+}
+
+// Bucket a 0-100 Google Trends interest value into a display label.
+//   0-33 -> Low, 34-66 -> Medium, 67-100 -> High. null in -> null out.
+function bucketSearchInterest(v) {
+  if (v == null || !Number.isFinite(v)) return null;
+  if (v <= 33) return 'Low';
+  if (v <= 66) return 'Medium';
+  return 'High';
 }
 
 
