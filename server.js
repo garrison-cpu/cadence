@@ -421,7 +421,7 @@ async function pullYouTube(niche) {
 // ── Scan: Cadence decides the trends, Claude writes the creative layer ───────
 app.post('/api/scan', async (req, res) => {
   try {
-    const { niche, audience, platforms, formats, tone, extra, profile } = req.body || {};
+    const { niche, audience, platforms, formats, tone, extra, profile, fresh } = req.body || {};
     if (!niche || !String(niche).trim()) {
       return res.status(400).json({ error: { message: 'Missing niche.' } });
     }
@@ -429,14 +429,44 @@ app.post('/api/scan', async (req, res) => {
       ? platforms
       : ['tiktok', 'reddit', 'youtube', 'instagram', 'google_trends'];
 
-    console.log(`[scan] niche="${niche}" platforms=${plats.join(',')}`);
+    // Whole-scan result cache. Keyed on every input that changes the output, so
+    // re-running the SAME scan (the common dev loop) returns instantly instead of
+    // re-pulling every source and re-running both Claude calls. Bypass with
+    // { fresh:true } in the body or ?fresh=1 (still refreshes the cache).
+    const SCAN_TTL_MS = 30 * 60 * 1000; // 30 min
+    const wantsFresh = fresh === true || req.query.fresh === '1' || req.query.fresh === 'true';
+    const keyInput = JSON.stringify({
+      niche: String(niche).trim().toLowerCase(),
+      audience: audience || '', tone: tone || '', extra: extra || '',
+      platforms: [...plats].sort(),
+      formats: [...(formats || [])].sort(),
+      profile: profile || null,
+    });
+    let hash = 5381;
+    for (let i = 0; i < keyInput.length; i++) hash = ((hash << 5) + hash + keyInput.charCodeAt(i)) | 0;
+    const cacheKey = 'scan:' + (hash >>> 0).toString(36);
 
-    const youtubeVideos = plats.includes('youtube') ? await pullYouTube(niche) : [];
+    if (!wantsFresh) {
+      try {
+        const hit = await store.getJSON(cacheKey);
+        if (hit && hit.result && (Date.now() - hit.ts) < SCAN_TTL_MS) {
+          console.log(`[scan] CACHE HIT ${cacheKey} (age ${Math.round((Date.now() - hit.ts) / 1000)}s) niche="${niche}"`);
+          return res.json(hit.result);
+        }
+      } catch {}
+    }
+    console.log(`[scan] CACHE MISS ${cacheKey} fresh=${wantsFresh} niche="${niche}" platforms=${plats.join(',')}`);
+
+    // Independent live pulls — run concurrently instead of sequentially.
+    const [youtubeVideos, tiktokVideos] = await Promise.all([
+      plats.includes('youtube') ? pullYouTube(niche) : Promise.resolve([]),
+      plats.includes('tiktok')  ? pullTikTok(niche)  : Promise.resolve([]),
+    ]);
 
     const result = await engine.runScan({
       store, niche, audience, platforms: plats,
       formats, tone, extra, profile,
-      tiktokVideos: plats.includes('tiktok') ? await pullTikTok(niche) : [],
+      tiktokVideos,
       fetchReddit: fetchRedditServer,
       fetchTrendSeries,
       fetchInstagram,
@@ -445,10 +475,26 @@ app.post('/api/scan', async (req, res) => {
       onStatus: () => {},
     });
     console.log(`[scan] done: ${(result.trends || []).length} themes${result.note ? ' (' + result.note + ')' : ''}`);
-    res.json(result); // { trends, note? }
+
+    // Cache only a non-empty result, so an empty/garbage run is retried next scan.
+    if (result && (result.trends || []).length) {
+      try { await store.setJSON(cacheKey, { result, ts: Date.now() }); } catch {}
+    }
+    res.json(result);
   } catch (e) {
     console.error('[scan] error:', e.message);
     res.status(502).json({ error: { message: 'Scan error: ' + e.message } });
+  }
+});
+
+app.get('/api/scan/clear', async (_req, res) => {
+  try {
+    const keys = await store.listKeys('scan:');
+    for (const k of keys) { try { await db.delete(k); } catch {} }
+    console.log(`[scan] cache cleared: ${keys.length} keys`);
+    res.json({ cleared: keys.length });
+  } catch (e) {
+    res.status(500).json({ error: { message: e.message } });
   }
 });
 
