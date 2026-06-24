@@ -457,4 +457,21 @@ app.get('/',    (_req, res) => res.sendFile(path.join(pub, 'index.html')));
 app.get('/app', (_req, res) => res.sendFile(path.join(pub, 'app.html')));
 app.use(express.static(pub)); // serves any other assets you add later
 
-app.listen(PORT, () => console.log(`Cadence running on http://localhost:${PORT}`));
+const server = app.listen(PORT, () => console.log(`Cadence running on http://localhost:${PORT}`));
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Another instance is likely still running. Stop it and restart.`);
+    process.exit(1);
+  } else {
+    throw err;
+  }
+});
+
+function shutdown(signal) {
+  console.log(`${signal} received, shutting down.`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
