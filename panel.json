@@ -1,0 +1,4 @@
+{
+  "_doc": "Trendsetter panel. Add accounts as {handle, niche}. Run scripts/resolve-panel.js to fill uid/secUid/followers. Selection rubric: 50K-500K followers (mid-tier = leading edge), posts frequently, short-video-native, trend-forward, niche-pure. Niches: beauty, fitness, food, fashion.",
+  "accounts": []
+}

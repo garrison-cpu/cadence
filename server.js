@@ -504,6 +504,159 @@ app.get('/api/scan/clear', async (_req, res) => {
   }
 });
 
+// ── Trendsetter panel scan ───────────────────────────────────────────────────
+// Background data-capture seed: scans a curated set of TikTok accounts
+// (panel.json), writes a per-account views/engagement time-series, and flags
+// self-relative breakouts (a post that massively outperforms the account's own
+// recent median). Triggered on a schedule via POST /api/cron/panel-scan —
+// either by a Replit Scheduled Deployment (scripts/run-panel-scan.js) or a
+// GitHub Actions cron (.github/workflows/panel-scan.yml).
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function median(arr) {
+  const a = (arr || []).filter((n) => typeof n === 'number' && !Number.isNaN(n)).sort((x, y) => x - y);
+  if (!a.length) return 0;
+  const mid = a.length >> 1;
+  return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+}
+
+app.post('/api/cron/panel-scan', async (req, res) => {
+  // Guard: only refuse when a CRON_KEY is configured AND the header doesn't match.
+  const CRON_KEY = process.env.CRON_KEY || '';
+  if (CRON_KEY && req.get('x-cron-key') !== CRON_KEY) {
+    return res.status(401).json({ error: { message: 'Unauthorized.' } });
+  }
+
+  const t0 = Date.now();
+  let panel;
+  try {
+    panel = require('./panel.json');
+  } catch (e) {
+    console.error('[panel] could not load panel.json:', e.message);
+    return res.status(500).json({ error: { message: 'panel.json missing or invalid.' } });
+  }
+
+  // Only resolved TikTok accounts. Platform defaults to tiktok when absent.
+  const accounts = (panel.accounts || []).filter(
+    (a) => a && a.uid && (a.platform || 'tiktok') === 'tiktok'
+  );
+
+  const breakouts = [];
+  let scanned = 0, skipped = 0;
+
+  for (const acct of accounts) {
+    const handle = (acct.handle || '').replace(/^@/, '').trim();
+    try {
+      const raw  = await tokGet(`/v1/post/user/${acct.uid}/posts?count=15&offset=0`);
+      const vids = parseVideos(raw); // {views, likes, createTime, url, desc}
+
+      if (vids.length < 3) {
+        console.log(`[panel] @${handle} skipped (only ${vids.length} videos)`);
+        skipped++;
+        await sleep(350);
+        continue;
+      }
+
+      const baseline = median(vids.map((v) => v.views).filter((n) => n > 0));
+
+      // Standout = highest views-per-hour since posting (early velocity beats raw
+      // total, which just favors older posts). Fall back to max views when no
+      // usable timestamps exist.
+      const nowSec = Date.now() / 1000;
+      let standout = null;
+      for (const v of vids) {
+        v.velocity = v.createTime > 0
+          ? v.views / Math.max(1, (nowSec - v.createTime) / 3600)
+          : 0;
+        if (!standout || v.velocity > standout.velocity) standout = v;
+      }
+      if (standout && standout.velocity === 0) {
+        // All velocities zero (no timestamps) — fall back to max views.
+        standout = vids.reduce((m, v) => (v.views > m.views ? v : m), vids[0]);
+      }
+
+      const mult = baseline > 0 ? standout.views / baseline : 0;
+
+      // Append to the per-account time-series (cap to last 180 points).
+      const seriesKey = `series:tiktok:${handle}`;
+      let series = null;
+      try { series = await store.getJSON(seriesKey); } catch {}
+      if (!series || !Array.isArray(series.points)) series = { points: [] };
+      series.points.push({
+        t: Date.now(),
+        medViews: baseline,
+        medEng: median(vids.map((v) => (v.views > 0 ? v.likes / v.views : 0))),
+        topViews: standout.views,
+      });
+      if (series.points.length > 180) series.points = series.points.slice(-180);
+      try { await store.setJSON(seriesKey, series); } catch {}
+
+      // Latest snapshot (top 10 posts) for quick UI reads.
+      try {
+        await store.setJSON(`latest:tiktok:${handle}`, { t: Date.now(), posts: vids.slice(0, 10) });
+      } catch {}
+
+      // Self-relative breakout: ≥6× the account's own median AND a real audience.
+      if (mult >= 6 && standout.views >= 250000) {
+        breakouts.push({
+          handle,
+          niche: acct.niche,
+          mult: Number(mult.toFixed(1)),
+          velocity: Math.round(standout.velocity),
+          post: {
+            url: standout.url,
+            desc: standout.desc,
+            views: standout.views,
+            likes: standout.likes,
+            createTime: standout.createTime,
+          },
+        });
+      }
+
+      scanned++;
+      console.log(`[panel] @${handle} base=${baseline} top=${standout.views} mult=${mult.toFixed(1)}`);
+    } catch (e) {
+      console.error(`[panel] @${handle} error:`, e.message);
+      skipped++;
+    }
+    await sleep(350); // respect TokAPI rate limits
+  }
+
+  // Sounds layer — best-effort, isolated so a charts failure never fails the scan.
+  // Field names are a guess from the spec; stay defensive (null/'' on miss).
+  let soundsCount = 0;
+  try {
+    const charts = await tokGet('/v1/music/charts?region=US');
+    const list =
+      (Array.isArray(charts) && charts) ||
+      charts?.music_list || charts?.musicList ||
+      charts?.data?.music_list || charts?.data ||
+      charts?.sound_list || charts?.items || [];
+    const arr = (Array.isArray(list) ? list : []).slice(0, 20).map((m) => ({
+      musicId: m.music_info?.id || m.id || m.music?.id || null,
+      title:   m.title || m.music_info?.title || m.music?.title || '',
+      author:  m.author || m.music_info?.author || '',
+    }));
+    soundsCount = arr.length;
+    await store.setJSON('trending_sounds:tiktok', { t: Date.now(), items: arr });
+  } catch (e) {
+    console.error('[panel] sounds layer failed (non-fatal):', e.message);
+  }
+
+  // Persist breakouts, highest-multiple first.
+  try {
+    await store.setJSON('breakouts:tiktok', {
+      t: Date.now(),
+      items: breakouts.sort((a, b) => b.mult - a.mult),
+    });
+  } catch (e) {
+    console.error('[panel] could not persist breakouts:', e.message);
+  }
+
+  const ms = Date.now() - t0;
+  console.log(`[panel] scan done: scanned=${scanned} skipped=${skipped} breakouts=${breakouts.length} sounds=${soundsCount} in ${ms}ms`);
+  res.json({ scanned, skipped, breakouts: breakouts.length, sounds: soundsCount, ms });
+});
+
 // ── Static pages ─────────────────────────────────────────────────────────────
 const pub = path.join(__dirname, 'public');
 app.get('/',    (_req, res) => res.sendFile(path.join(pub, 'index.html')));
