@@ -38,6 +38,14 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL   || 'claude-sonnet-4-6';
 const TOKAPI_HOST = 'tokapi-mobile-version.p.rapidapi.com';
 const TOKAPI_BASE = 'https://' + TOKAPI_HOST;
 
+// Scraped post text can contain lone/unpaired UTF-16 surrogates (broken emoji).
+// JSON.stringify escapes them as \udXXX, which the Anthropic API rejects with a
+// 400 — so every prompt passes through this before the request body is built.
+// Removes ONLY unpaired high/low surrogates; valid paired emoji stay intact.
+function stripLoneSurrogates(s) {
+  return String(s == null ? '' : s).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
 // Apify powers the live Google Trends + Instagram sources used by /api/scan.
 // The token NEVER leaves the server (never echoed to the browser).
 const APIFY_TOKEN = process.env.APIFY_TOKEN || '';
@@ -85,7 +93,7 @@ app.post('/api/claude', async (req, res) => {
     const body = {
       model: CLAUDE_MODEL,
       max_tokens: Math.min(Number(maxTokens) || 4000, 16000),
-      messages: [{ role: 'user', content: String(prompt) }],
+      messages: [{ role: 'user', content: stripLoneSurrogates(prompt) }],
     };
     if (useSearch) body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
 
@@ -179,7 +187,7 @@ async function claudeCallText(prompt, useSearch = false) {
   const body = {
     model: CLAUDE_MODEL,
     max_tokens: Math.min(4000, 16000),
-    messages: [{ role: 'user', content: String(prompt) }],
+    messages: [{ role: 'user', content: stripLoneSurrogates(prompt) }],
   };
   if (useSearch) body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
 
