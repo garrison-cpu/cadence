@@ -638,7 +638,130 @@ const MOCK_TRENDS = [
   { id:'m3', platform:'Reddit',    handle:'r/productivity',  title:'"the best ___ is the one you actually ___" replies sub-thread', views:'912K', posts:'4.2K', delta:'+86%',  window:'48h', plat:'reddit', fmtKey:'reply' },
 ];
 
-function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab }) {
+// ── Live Discover (panel-backed) ─────────────────────────────────────────────
+// Kill switch for the whole de-mock: false = Discover renders exactly the mock
+// page above (no fetches, no live branches). MOCK_TRENDS stays as the fallback
+// whenever the panel hasn't produced data yet.
+const SHOW_LIVE_DISCOVER = true;
+
+// Heat label for a breakout's self-relative multiple (panel floor is 6×).
+const heatForMult = (m) => m >= 20 ? 'viral' : m >= 10 ? 'hot' : 'rising';
+
+// Relative post age from a unix-seconds createTime; '' when unknown (hidden).
+const ageLabel = (sec) => {
+  if (!sec) return '';
+  const hrs = Math.max(1, Math.round((Date.now()/1000 - sec) / 3600));
+  return hrs < 48 ? hrs + 'h' : Math.round(hrs / 24) + 'd';
+};
+
+const DISCOVER_WINDOW_SECS = { '24h': 86400, '7d': 604800, '30d': 2592000 };
+
+// Map a panel breakout into the Studio trend-context shape (same handoff the
+// scanner results use). Only real fields — nothing invented.
+function breakoutTrend(b) {
+  const p = b.post || {};
+  const er = (p.views > 0 && p.likes != null) ? p.likes / p.views : null;
+  return {
+    id: 'bk_' + b.handle,
+    title: p.desc || ('@' + b.handle),
+    platform: 'tiktok',
+    dominantPlatform: 'tiktok',
+    dominantPlatformLabel: 'TikTok',
+    heat: b.mult != null ? heatForMult(b.mult) : '',
+    delta: b.mult != null ? b.mult + '× the account\'s own median' : '',
+    engagementRate: er != null ? (er * 100).toFixed(1) + '%' : '—',
+    engagementRateReal: er != null,
+    contentAngles: [],
+    bestTimeToPostReal: false,
+    topPosts: p.url || p.desc ? [{
+      platform: 'tiktok', text: p.desc || '', views: p.views || 0,
+      engagementRate: er, url: p.url || null, likes: p.likes ?? null,
+      comments: null, subreddit: null, createTime: p.createTime || null, publishedAt: null,
+    }] : [],
+  };
+}
+
+/* Live sparkline — same markup as Sparkline (which is shared with the results
+   screen and animates hardcoded data), but plotting real panel series points.
+   Sparkline itself is untouched. */
+function LiveSparkline({ points, height=44, color, gradient=true }) {
+  const data = (points || []).filter(v => typeof v === 'number' && !Number.isNaN(v));
+  const max = Math.max(...data), min = Math.min(...data);
+  const W=200, H=60;
+  const pts = data.map((v,i) => [i/(data.length-1)*W, H-(v-min)/(max-min||1)*H]);
+  const d = pts.map((p,i) => (i===0?'M':'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const gid = 'lspk-' + (color||'g').replace(/[^a-z0-9]/gi,'') + height;
+  return h('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio:'none', style:{ width:'100%', height, display:'block' } },
+    h('defs', null,
+      gradient
+        ? h('linearGradient', { id: gid+'-s', x1:0, y1:0, x2:1, y2:0 },
+            h('stop', { offset:'0%', 'stop-color':'#6EE7B7' }),
+            h('stop', { offset:'50%','stop-color':'#2DD4BF' }),
+            h('stop', { offset:'100%','stop-color':'#67E8F9' })
+          )
+        : h('linearGradient', { id: gid+'-s' }, h('stop', { offset:'0%', 'stop-color': color||'#2DD4BF' })),
+      h('linearGradient', { id: gid+'-f', x1:0, y1:0, x2:0, y2:1 },
+        h('stop', { offset:'0%',  'stop-color': color || '#2DD4BF', 'stop-opacity':'0.20' }),
+        h('stop', { offset:'100%','stop-color': color || '#2DD4BF', 'stop-opacity':'0' })
+      )
+    ),
+    h('path', { d: d + ` L${W},${H} L0,${H} Z`, fill: `url(#${gid}-f)` }),
+    h('path', { d, fill:'none', stroke:`url(#${gid}-s)`, 'stroke-width':'2.4', 'vector-effect':'non-scaling-stroke', 'stroke-linecap':'round', 'stroke-linejoin':'round' })
+  );
+}
+
+function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab, onOpenStudio, savedIds, toggleSave }) {
+  // Live panel data. All fetching is gated on SHOW_LIVE_DISCOVER; with the flag
+  // off (or the panel not yet run) every live branch below is skipped and the
+  // original mock page renders unchanged.
+  const [liveBk, setLiveBk] = useState(null);
+  const [liveSounds, setLiveSounds] = useState(null);
+  const [heroSeries, setHeroSeries] = useState(null);
+  const [winSel, setWinSel] = useState('24h');
+  const [fmtSel, setFmtSel] = useState(null);
+
+  useEffect(() => {
+    if (!SHOW_LIVE_DISCOVER) return;
+    let dead = false;
+    (async () => {
+      try { const r = await fetch('/api/discover/breakouts', { credentials:'same-origin' }); const d = await r.json(); if (!dead) setLiveBk(d); } catch {}
+      try { const r = await fetch('/api/discover/sounds', { credentials:'same-origin' }); const d = await r.json(); if (!dead) setLiveSounds(d); } catch {}
+    })();
+    return () => { dead = true; };
+  }, []);
+
+  const bkItems = (SHOW_LIVE_DISCOVER && liveBk && Array.isArray(liveBk.items)) ? liveBk.items : [];
+  const isLive = bkItems.length > 0;      // panel has real breakouts -> live UI
+  const hero = isLive ? bkItems[0] : null;
+  const saved = (id) => (savedIds || []).includes(id);
+
+  useEffect(() => {
+    if (!hero || !hero.handle) return;
+    let dead = false;
+    (async () => {
+      try { const r = await fetch('/api/discover/series/' + encodeURIComponent(hero.handle), { credentials:'same-origin' }); const d = await r.json(); if (!dead) setHeroSeries(d); } catch {}
+    })();
+    return () => { dead = true; };
+  }, [hero && hero.handle]);
+
+  // Feed = breakouts after the hero, filtered by the real window/format pills.
+  // Items with no createTime can't prove recency, so a recency filter hides them.
+  const nowSec = Date.now() / 1000;
+  const feed = bkItems.slice(1).filter(b => {
+    const ct = b.post && b.post.createTime;
+    if (!ct || (nowSec - ct) > DISCOVER_WINDOW_SECS[winSel]) return false;
+    if (fmtSel && fmtSel !== 'short_video') return false; // every panel breakout is a TikTok short-form video
+    return true;
+  }).slice(0, 6);
+
+  const heroSeriesPts = (heroSeries && Array.isArray(heroSeries.points))
+    ? heroSeries.points.map(p => p.topViews).filter(v => typeof v === 'number' && !Number.isNaN(v))
+    : [];
+
+  const soundItems = (SHOW_LIVE_DISCOVER && liveSounds && Array.isArray(liveSounds.items))
+    ? liveSounds.items.filter(s => s && s.title)
+    : [];
+
   return h('div', { style: { position:'relative' } },
     /* gradient wash backdrop */
     h('div', { style: { position:'absolute', inset:0, background:`radial-gradient(900px 500px at 12% 0%, ${T.g1}22, transparent 60%), radial-gradient(700px 400px at 95% 30%, ${T.g3}22, transparent 60%), radial-gradient(600px 400px at 50% 100%, ${T.g2}10, transparent 60%)`, pointerEvents:'none' } }),
@@ -654,7 +777,14 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab }) {
             h('span', { className:'serif-i', style:{ fontSize: 15, color: T.body, letterSpacing:'-0.005em' } }, 'Live, right now·'),
             h('span', { style: { fontFamily: T.fontMono, fontSize: 12, color: T.body } }, '12,438 trends')
           ),
-          h('h1', { style: { fontFamily: T.fontBody, fontSize: 78, fontWeight: 700, letterSpacing:'-0.04em', lineHeight: 0.98, margin:'0 0 18px', color: T.ink } },
+          SHOW_LIVE_DISCOVER
+          ? h('h1', { style: { fontFamily: T.fontBody, fontSize: 78, fontWeight: 700, letterSpacing:'-0.04em', lineHeight: 0.98, margin:'0 0 18px', color: T.ink } },
+              'Your niche is trending ',
+              h('span', { className:'serif-i', style:{ fontWeight: 400, fontStyle:'italic' } }, 'right now.'),
+              h('br'),
+              h('span', { className:'gt' }, 'Here\'s what to make.')
+            )
+          : h('h1', { style: { fontFamily: T.fontBody, fontSize: 78, fontWeight: 700, letterSpacing:'-0.04em', lineHeight: 0.98, margin:'0 0 18px', color: T.ink } },
             'See what\'s ',
             h('span', { className:'serif-i', style:{ fontWeight: 400, fontStyle:'italic' } }, 'hitting'),
             h('br'),
@@ -679,7 +809,39 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab }) {
 
         /* Floating brief card — no border, big radius, soft shadows */
         h('div', { style: { position:'relative', animation:'float-a 7s ease-in-out infinite' } },
-          h('div', { style: { background: T.surface, borderRadius: 28, padding: 24, boxShadow: T.sh4, display:'flex', flexDirection:'column', gap: 14, position:'relative', overflow:'hidden' } },
+          (SHOW_LIVE_DISCOVER && hero)
+          ? h('div', { style: { background: T.surface, borderRadius: 28, padding: 24, boxShadow: T.sh4, display:'flex', flexDirection:'column', gap: 14, position:'relative', overflow:'hidden' } },
+              h('div', { style:{ position:'absolute', top:-40, right:-40, width: 200, height: 200, borderRadius:'50%', background:`radial-gradient(closest-side, ${T.g3}28, transparent)` } }),
+              h('div', { style: { position:'relative', display:'flex', justifyContent:'space-between', alignItems:'center' } },
+                h('div', { style: { display:'flex', alignItems:'center', gap: 8 } },
+                  h('span', { style: { width:8, height:8, borderRadius:'50%', background: PLAT.tiktok.dot } }),
+                  h('span', { className:'serif-i', style:{ fontSize: 17, color: T.ink } }, 'TikTok ·'),
+                  h('span', { style: { ...mono(T), color: T.body } }, '@' + hero.handle)
+                ),
+                hero.mult != null && h(HeatPill, { T, heat: heatForMult(hero.mult) })
+              ),
+              h('div', { className: 'serif', style: { position:'relative', fontSize: 26, lineHeight: 1.1, letterSpacing:'-0.015em', color: T.ink } }, hero.post?.desc || ('@' + hero.handle)),
+              heroSeriesPts.length >= 2
+                ? h(LiveSparkline, { points: heroSeriesPts, height: 64, gradient: true })
+                : h(Sparkline, { t, height: 64, gradient: true }),
+              h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 14, position:'relative' } },
+                [
+                  hero.post?.views != null ? ['Views', fmt(hero.post.views)] : null,
+                  hero.mult ? ['× median', hero.mult + '×'] : null,
+                  hero.velocity ? ['Views/hr', fmt(hero.velocity)] : null,
+                ].filter(Boolean).map(([k,v]) =>
+                  h('div', { key: k },
+                    h('div', { style: { ...eb(T), marginBottom: 4 } }, k),
+                    h('div', { style: { fontFamily: T.fontBody, fontSize: 24, fontWeight: 700, letterSpacing:'-0.025em', color: T.ink, lineHeight: 1 } }, v)
+                  )
+                )
+              ),
+              h('div', { style: { display:'flex', gap: 10, paddingTop: 6 } },
+                h('button', { onClick: ()=>onOpenStudio && onOpenStudio(breakoutTrend(hero)), style: { ...btnAccent(T), flex:1, justifyContent:'center', padding:'13px 0' } }, 'Open brief →'),
+                h('button', { onClick: ()=>toggleSave && toggleSave('bk_' + hero.handle), style: { ...btnSec(T), flex:1, justifyContent:'center', display:'flex' } }, saved('bk_' + hero.handle) ? '✓ Saved' : '＋ Save')
+              )
+            )
+          : h('div', { style: { background: T.surface, borderRadius: 28, padding: 24, boxShadow: T.sh4, display:'flex', flexDirection:'column', gap: 14, position:'relative', overflow:'hidden' } },
             h('div', { style:{ position:'absolute', top:-40, right:-40, width: 200, height: 200, borderRadius:'50%', background:`radial-gradient(closest-side, ${T.g3}28, transparent)` } }),
             h('div', { style: { position:'relative', display:'flex', justifyContent:'space-between', alignItems:'center' } },
               h('div', { style: { display:'flex', alignItems:'center', gap: 8 } },
@@ -719,7 +881,7 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab }) {
         ),
         h('div', { style: { display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap: 16 } },
           FORMAT_ACCENTS.map(a =>
-            h('div', { key: a.key, onClick: ()=>setTab('scanner'), style: { background: a.bg, color: a.fg, borderRadius: 20, padding:'24px 22px 22px', height: 156, display:'flex', flexDirection:'column', justifyContent:'space-between', cursor:'pointer', boxShadow: T.sh3, position:'relative', overflow:'hidden' } },
+            h('div', { key: a.key, onClick: ()=>{ if (SHOW_LIVE_DISCOVER && isLive) setFmtSel(cur => cur===a.key ? null : a.key); else setTab('scanner'); }, style: { background: a.bg, color: a.fg, borderRadius: 20, padding:'24px 22px 22px', height: 156, display:'flex', flexDirection:'column', justifyContent:'space-between', cursor:'pointer', boxShadow: T.sh3, position:'relative', overflow:'hidden' } },
               h('div', { style:{ position:'absolute', top:-30, right:-30, width:120, height:120, borderRadius:'50%', background:'rgba(255,255,255,.18)' } }),
               h('div', { style: { fontFamily: T.fontMono, fontSize: 10.5, fontWeight: 600, letterSpacing:'0.08em', textTransform:'uppercase', opacity: 0.78 } }, a.key.replace('_',' · ')),
               h('div', { className:'serif', style: { fontSize: 26, fontStyle:'italic', lineHeight: 1.05, position:'relative' } }, a.label)
@@ -732,12 +894,56 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab }) {
       h('section', null,
         h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom: 18 } },
           h('div', null,
-            h('div', { style: eb(T) }, 'Top trends · AI tools for creators'),
-            h('div', { className:'serif', style: { marginTop: 6, fontSize: 28, color: T.ink, letterSpacing:'-0.015em' } }, 'Three are climbing right now.')
+            h('div', { style: eb(T) }, (SHOW_LIVE_DISCOVER && isLive) ? 'Top trends · TikTok creator panel' : 'Top trends · AI tools for creators'),
+            h('div', { className:'serif', style: { marginTop: 6, fontSize: 28, color: T.ink, letterSpacing:'-0.015em' } },
+              (SHOW_LIVE_DISCOVER && isLive)
+                ? (feed.length === 0 ? 'Nothing matches these filters yet.' : feed.length === 1 ? 'One is climbing right now.' : feed.length + ' are climbing right now.')
+                : 'Three are climbing right now.')
           ),
-          h('div', { style: { display:'flex', gap: 6 } }, ['24h','7d','30d'].map((w,i) => h('button', { key: w, style: { background: i===0 ? T.ink : T.surface, color: i===0 ? T.onPrimary : T.ink, border:'none', boxShadow: i===0?T.sh2:T.sh1, fontFamily: T.fontBody, fontSize: 13, fontWeight: 500, padding:'7px 16px', borderRadius: 999, cursor:'pointer' } }, w)))
+          h('div', { style: { display:'flex', gap: 6 } }, ['24h','7d','30d'].map((w,i) => {
+            const active = (SHOW_LIVE_DISCOVER && isLive) ? winSel === w : i === 0;
+            return h('button', { key: w, onClick: (SHOW_LIVE_DISCOVER && isLive) ? ()=>setWinSel(w) : undefined, style: { background: active ? T.ink : T.surface, color: active ? T.onPrimary : T.ink, border:'none', boxShadow: active?T.sh2:T.sh1, fontFamily: T.fontBody, fontSize: 13, fontWeight: 500, padding:'7px 16px', borderRadius: 999, cursor:'pointer' } }, w);
+          }))
         ),
-        h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 20 } },
+        (SHOW_LIVE_DISCOVER && isLive)
+        ? (feed.length === 0
+          ? h('span', { className:'serif-i', style:{ fontSize: 14, color: T.bodyMid } }, 'No breakouts match these filters yet — try a wider window.')
+          : h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 20 } },
+              feed.map((b,i) => {
+                const fa = FORMAT_ACCENTS[0]; // every panel breakout is a TikTok short-form video
+                const age = ageLabel(b.post?.createTime);
+                const stats = [
+                  b.post?.views != null ? ['Views', fmt(b.post.views)] : null,
+                  b.post?.likes != null ? ['Likes', fmt(b.post.likes)] : null,
+                  b.mult ? ['× med', b.mult + '×'] : null,
+                ].filter(Boolean);
+                return h('div', { key: 'bk_' + b.handle, onClick: ()=>setTab('scanner'), style: { background: T.surface, borderRadius: 22, padding: 24, boxShadow: T.sh3, display:'flex', flexDirection:'column', gap: 14, cursor:'pointer', border: 'none' } },
+                  h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center' } },
+                    h('div', { style: { display:'flex', alignItems:'center', gap: 8 } },
+                      h('span', { style: { width:9, height:9, borderRadius:'50%', background: PLAT.tiktok.dot } }),
+                      h('span', { className:'serif-i', style:{ fontSize: 16, color: T.ink } }, 'TikTok')
+                    ),
+                    age && h('span', { style: { fontFamily: T.fontMono, fontSize: 11, color: T.mute, letterSpacing:'0.06em' } }, age + ' ago')
+                  ),
+                  h('div', { style: { ...eb(T) } }, '@' + b.handle),
+                  h('div', { className:'serif', style: { fontSize: 22, lineHeight: 1.18, color: T.ink, letterSpacing:'-0.015em', minHeight: 78 } }, b.post?.desc || ('@' + b.handle)),
+                  h('div', { style: { background: fa.soft, color: fa.fg, borderRadius: 999, padding:'4px 12px', fontFamily: T.fontMono, fontSize: 10.5, fontWeight: 600, letterSpacing:'0.08em', textTransform:'uppercase', alignSelf:'flex-start' } }, fa.label),
+                  h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 10, paddingTop: 14, borderTop:`1px solid ${T.hairlineSoft}` } },
+                    stats.map(([k,v]) =>
+                      h('div', { key: k },
+                        h('div', { style: { ...eb(T), marginBottom: 3 } }, k),
+                        h('div', { style: { fontFamily: T.fontBody, fontSize: 18, fontWeight: 700, letterSpacing:'-0.02em', color: k==='× med' ? T.accentDeep : T.ink } }, v)
+                      )
+                    )
+                  ),
+                  h('div', { style: { display:'flex', gap: 8 } },
+                    h('button', { onClick: (e)=>{ e.stopPropagation(); onOpenStudio && onOpenStudio(breakoutTrend(b)); }, style: { ...btnPrimary(T), flex:1, justifyContent:'center', fontSize: 13.5, padding:'10px 0' } }, 'Open brief →'),
+                    h('button', { onClick: (e)=>{ e.stopPropagation(); toggleSave && toggleSave('bk_' + b.handle); }, style: { ...btnSec(T), padding:'10px 14px' } }, saved('bk_' + b.handle) ? '✓' : '＋')
+                  )
+                );
+              })
+            ))
+        : h('div', { style: { display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap: 20 } },
           MOCK_TRENDS.map((tr,i) => {
             const fa = FORMAT_ACCENTS.find(f=>f.key===tr.fmtKey) || FORMAT_ACCENTS[0];
             return h('div', { key: tr.id, onClick: ()=>setTab('scanner'), style: { background: T.surface, borderRadius: 22, padding: 24, boxShadow: T.sh3, display:'flex', flexDirection:'column', gap: 14, cursor:'pointer', border: 'none' } },
@@ -766,6 +972,21 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab }) {
             );
           })
         )
+      ),
+
+      /* RISING SOUNDS — panel sounds layer; whole section hidden when absent */
+      SHOW_LIVE_DISCOVER && soundItems.length > 0 && h('section', null,
+        h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom: 18 } },
+          h('div', null,
+            h('div', { style: eb(T) }, 'Rising sounds'),
+            h('div', { className:'serif', style: { marginTop: 6, fontSize: 28, color: T.ink, letterSpacing:'-0.015em' } }, 'What TikTok is charting right now.')
+          )
+        ),
+        h('div', { style: { display:'flex', alignItems:'center', gap: 10, flexWrap:'wrap' } },
+          soundItems.slice(0, 20).map((s,i) =>
+            h('span', { key: s.musicId || 'snd' + i, style: { background: T.surface, border:'none', boxShadow: T.sh1, color: T.ink, fontFamily: T.fontBody, fontSize: 13.5, fontWeight: 500, padding:'7px 14px', borderRadius: 999 } }, '♫ ' + s.title + (s.author ? ' — ' + s.author : ''))
+          )
+        )
       )
     )
   );
@@ -773,9 +994,9 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab }) {
 
 function LandingPage(props) {
   const [inputVal, setInputVal] = useState('AI tools for creators');
-  const { T, t, setTab, setNiche, onScan } = props;
+  const { T, t, setTab, setNiche, onScan, onOpenStudio, savedIds, toggleSave } = props;
   const doScan = () => { setNiche(inputVal); setTab('scanner'); onScan(inputVal); };
-  const passProps = { T, t, inputVal, setInputVal, doScan, setTab };
+  const passProps = { T, t, inputVal, setInputVal, doScan, setTab, onOpenStudio, savedIds, toggleSave };
   return h(DiscoverFull, passProps);
 }
 
@@ -1778,7 +1999,7 @@ ${youtubeVideos.length ? `There ARE ${youtubeVideos.length} real YouTube videos 
     h(TopBar, { T, tab, setTab, savedCount: savedIds.length, showKeys: ()=>setShowKeys(true), dark, setDark }),
 
     tab==='home'
-      ? h(LandingPage, { T, setTab, setNiche, niche, onScan: runScan })
+      ? h(LandingPage, { T, setTab, setNiche, niche, onScan: runScan, savedIds, toggleSave, onOpenStudio: (tr)=>{ setStudioTrend(tr); setTab('studio'); } })
       : h('div', { style: mainWrap },
           tab==='scanner' && h('div', { key:'sc', style: scannerWrap },
             scanPhase==='setup'  && h(ScannerSetup, { T, isMobile, niche, setNiche, audience, setAudience, platforms, togglePlat, formats, toggleFmt, tone, setTone, extra, setExtra, onScan: runScan }),

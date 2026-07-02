@@ -657,6 +657,38 @@ app.post('/api/cron/panel-scan', async (req, res) => {
   res.json({ scanned, skipped, breakouts: breakouts.length, sounds: soundsCount, ms });
 });
 
+// ── Discover reads ───────────────────────────────────────────────────────────
+// Read-only views over the panel scan's stored output for the Discover surface.
+// getJSON only — these routes can never alter panel data. Each returns a safe
+// empty shape when the key is absent (panel hasn't run yet).
+app.get('/api/discover/breakouts', async (_req, res) => {
+  try {
+    res.json((await store.getJSON('breakouts:tiktok')) || { items: [] });
+  } catch (e) {
+    res.json({ items: [] });
+  }
+});
+
+app.get('/api/discover/sounds', async (_req, res) => {
+  try {
+    res.json((await store.getJSON('trending_sounds:tiktok')) || { items: [] });
+  } catch (e) {
+    res.json({ items: [] });
+  }
+});
+
+app.get('/api/discover/series/:handle', async (req, res) => {
+  // handles come from panel.json (letters/digits/._-); reject anything else so
+  // the param can't address arbitrary store keys.
+  const handle = String(req.params.handle || '').replace(/^@/, '');
+  if (!/^[A-Za-z0-9._-]{1,60}$/.test(handle)) return res.json({ points: [] });
+  try {
+    res.json((await store.getJSON('series:tiktok:' + handle)) || { points: [] });
+  } catch (e) {
+    res.json({ points: [] });
+  }
+});
+
 // ── Static pages ─────────────────────────────────────────────────────────────
 const pub = path.join(__dirname, 'public');
 app.get('/',    (_req, res) => res.sendFile(path.join(pub, 'index.html')));
