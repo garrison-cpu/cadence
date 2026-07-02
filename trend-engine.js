@@ -453,7 +453,7 @@ async function redditBaseline(niche, fetchReddit) {
       signal: p.title,
       value: p.score,
       engagementRate: p.score > 0 ? p.comments / p.score : 0,
-      meta: { subreddit: p.subreddit, url: p.url, createdUtc: p.createdUtc },
+      meta: { subreddit: p.subreddit, url: p.url, createdUtc: p.createdUtc, comments: p.comments },
     })),
     seed: [],
   };
@@ -488,7 +488,7 @@ async function youtubeBaseline(niche, youtubeVideos) {
     signal: v.title,
     value: v.viewCount,
     engagementRate: v.viewCount > 0 ? v.likeCount / v.viewCount : 0,
-    meta: { url: v.url, likeCount: v.likeCount, publishedAt: v.publishedAt },
+    meta: { url: v.url, likeCount: v.likeCount, commentCount: v.commentCount, publishedAt: v.publishedAt },
   }));
   return { observations, seed: [] };
 }
@@ -757,6 +757,28 @@ function aggregateThemes(themesWithMembers) {
       };
     }).sort((a, b) => b.value - a.value);
 
+    // topPosts: the real posts behind the theme — up to 4 strongest members
+    // per platform, flattened and sorted by views. This is what the client
+    // renders as link cards and what Studio grounds its plan in.
+    const topPosts = platforms.flatMap(p =>
+      members
+        .filter(m => m.platform === p)
+        .sort((a, b) => b.measured.score - a.measured.score)
+        .slice(0, 4)
+        .map(m => ({
+          platform: p,
+          text: m.signal || '',
+          views: m.measured.current || 0,
+          engagementRate: m.measured.engagementRate ?? null,
+          url: m.meta?.url || null,
+          likes: m.meta?.likes ?? m.meta?.likeCount ?? null,
+          comments: m.meta?.comments ?? m.meta?.commentCount ?? null,
+          subreddit: m.meta?.subreddit || null,
+          createTime: m.meta?.createTime || null,
+          publishedAt: m.meta?.publishedAt || null,
+        }))
+    ).sort((a, b) => b.views - a.views);
+
     return {
       id: 'theme_' + (ti + 1),
       title: theme.title,
@@ -770,6 +792,7 @@ function aggregateThemes(themesWithMembers) {
         engagementRate: dominant ? (dominant.measured.engagementRate ?? null) : null,
         breadth,
         evidence,
+        topPosts,
         basis: dominant ? dominant.measured.basis : null,
       },
       meta: {},

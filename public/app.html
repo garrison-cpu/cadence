@@ -369,6 +369,7 @@ function evidenceNumber(e) {
 function mapEngineTrend(t, i) {
   const m = t.measured || {};
   const erReal = m.engagementRate != null;
+  const topPosts = Array.isArray(m.topPosts) ? m.topPosts : [];
   const dom = t.dominantPlatform || (t.platforms && t.platforms[0]) || '';
   const breadth = m.breadth || (t.platforms ? t.platforms.length : 1);
 
@@ -411,10 +412,18 @@ function mapEngineTrend(t, i) {
     postingTimeRationale: t.postingTimeRationale || '',
     searchInterest: t.searchInterest ?? null,
     searchInterestLabel: t.searchInterestLabel || null,
-    // legacy per-platform link lists no longer populated (evidence chips replace them)
-    realVideos: [],
-    redditPosts: [],
-    realYoutube: [],
+    // per-platform link cards, built from the theme's real top posts
+    realVideos: topPosts.filter(p => p.platform === 'tiktok').map(p => ({
+      url: p.url, desc: p.text, views: p.views, likes: p.likes ?? 0, createTime: p.createTime,
+    })),
+    redditPosts: topPosts.filter(p => p.platform === 'reddit').map(p => ({
+      url: p.url, title: p.text, subreddit: p.subreddit || '', score: p.views, comments: p.comments ?? 0,
+    })),
+    realYoutube: topPosts.filter(p => p.platform === 'youtube').map(p => ({
+      url: p.url, title: p.text, viewCount: p.views, likeCount: p.likes ?? 0, commentCount: p.comments ?? 0, publishedAt: p.publishedAt,
+    })),
+    // full flattened list, carried for the Studio handoff (real grounding data)
+    topPosts,
   };
 
   // dataSource lights the "LIVE DATA" badge when a measured platform leads
@@ -1182,25 +1191,54 @@ function StudioTab({ T, isMobile, prefillTrend, clearPrefill }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [openSec, setOpenSec] = useState(null);
+  // full trend handed off from "Build in Studio" — real posts, best-time, measured
+  // metrics. null when Studio is opened blank (generic generation path).
+  const [trendCtx, setTrendCtx] = useState(null);
 
-  useEffect(() => { if (!prefillTrend) return; setTopic(prefillTrend.title||''); setPlatform(prefillTrend.platform||'TikTok'); setFormat((prefillTrend.format||'').toLowerCase().includes('carousel') ? 'carousel' : 'reel'); clearPrefill(); }, [prefillTrend]);
+  useEffect(() => {
+    if (!prefillTrend) return;
+    setTopic(prefillTrend.title||'');
+    const SP = { tiktok:'TikTok', instagram:'Instagram', youtube:'YouTube Shorts' };
+    setPlatform(SP[prefillTrend.platform] || prefillTrend.platform || 'TikTok');
+    setFormat((prefillTrend.format||'').toLowerCase().includes('carousel') ? 'carousel' : 'reel');
+    setTrendCtx(prefillTrend);
+    clearPrefill();
+  }, [prefillTrend]);
 
   const generate = async () => {
     if (!topic.trim()) { alert('Enter a topic first.'); return; }
     setLoading(true); setResult(null);
     const isReel = format === 'reel';
+
+    // real-data grounding block — only when Studio was launched from a trend.
+    // The blank-form path sends the prompt exactly as before.
+    let realData = '';
+    if (trendCtx) {
+      const posts = (trendCtx.topPosts||[]).slice(0,8)
+        .map((p,i) => `${i+1}. [${p.platform}] "${p.text}" — ${fmt(p.views)} views${p.url ? ' — ' + p.url : ''}`)
+        .join('\n');
+      const lines = ['GROUND THIS PLAN IN REAL DATA FROM THE USER\'S SCAN. Do not invent stats or examples.'];
+      if (posts) lines.push('Top-performing reference posts in this niche right now:\n' + posts);
+      if (trendCtx.bestTimeToPostReal && trendCtx.bestTimeToPost) lines.push(`Best time to post (computed from real post times): ${trendCtx.bestTimeToPost}.`);
+      lines.push(`Why this is trending (measured): heat=${trendCtx.heat||'unknown'}, momentum=${trendCtx.delta||'unknown'}, engagement=${trendCtx.engagementRateReal ? trendCtx.engagementRate : 'not measured'}. Most traction on ${trendCtx.dominantPlatformLabel||trendCtx.platform||'unknown'}.`);
+      if (trendCtx.hook) lines.push(`Why it's trending (analysis): ${trendCtx.hook}`);
+      if (trendCtx.contentAngles?.length) lines.push('Suggested angle from the scan: ' + trendCtx.contentAngles[0]);
+      lines.push('Build the hook and structure by modeling these REAL posts, reference them explicitly as the proof, and schedule against the real best-time. If a fact isn\'t provided here, don\'t fabricate it.');
+      realData = lines.join('\n') + '\n\n';
+    }
+
     const prompt = isReel
       ? `Expert short-form video director. Create a complete production plan for a ${platform} Reel/TikTok.
 TOPIC: ${topic} | AUDIENCE: ${audience||'General'} | TONE: ${tone} | GOAL: ${goal} | DURATION: ${duration} | MUSIC: ${music}
 
-${STYLE}
+${realData}${STYLE}
 
 Return ONLY valid JSON: {"title":"Punchy title","logline":"One sentence concept","hook":"First 3 seconds word for word","shots":[{"timecode":"0:00-0:03","type":"Hook","visual":"Exactly what camera shows","audio":"Word for word script","direction":"Director note"}],"broll":["B-roll 1","B-roll 2","B-roll 3"],"music":{"recommendation":"Specific song or style","reasoning":"Why this works","alternatives":["Alt 1","Alt 2"],"searchTerms":["TikTok search term"]},"caption":{"hook":"First caption line","body":"Main caption","cta":"Call to action","hashtags":["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8"]},"editingNotes":"Key editing instructions","postingTip":"One specific tip"}
 Generate 6-10 shots. Be extremely specific.`
       : `Expert Instagram carousel strategist. Create a complete slide-by-slide plan.
 TOPIC: ${topic} | AUDIENCE: ${audience||'General'} | TONE: ${tone} | GOAL: ${goal}
 
-${STYLE}
+${realData}${STYLE}
 
 Return ONLY valid JSON: {"title":"Carousel title","hook":"Why this gets saves","swipeHook":"What keeps people swiping","slideCount":8,"slides":[{"number":1,"role":"Cover / Hook","headline":"Exact headline","subtext":"Supporting copy","visual":"Image direction","designNote":"Layout tip","purpose":"Why this slide exists"}],"coverStrategy":"Slide 1 stop-scroll","saveSlide":{"number":5,"reason":"Why people save this"},"caption":{"hook":"First line","body":"Main caption","cta":"CTA for saves","hashtags":["#tag1","#tag2","#tag3","#tag4","#tag5","#tag6","#tag7","#tag8"]},"colorPalette":"2-3 colors with reasoning","fontStyle":"Typography direction","postingTip":"One specific tip"}
 Generate 7-9 slides.`;
@@ -1262,6 +1300,7 @@ Generate 7-9 slides.`;
       h('button', { onClick: generate, disabled: loading, style: { ...btnAccent(T), width:'100%', justifyContent:'center', padding:'14px 0', fontSize: 15, opacity: loading ? 0.5 : 1 } }, loading ? 'Building your plan…' : `Build ${format==='reel'?'Reel':'Carousel'} plan →`)
     ),
     result && h('div', { style: { overflowY: isMobile ? 'visible' : 'auto', padding: isMobile ? '20px 16px 32px' : '32px 36px 40px', borderTop: isMobile ? `1px solid ${T.hairline}` : 'none', background: T.canvas } },
+      trendCtx && (trendCtx.topPosts||[]).length > 0 && h('div', { style: { display:'inline-flex', alignItems:'center', gap: 6, background:`linear-gradient(105deg, ${T.g1}12, ${T.g3}12)`, border:`1px solid ${T.g2}40`, borderRadius: 999, padding:'5px 13px', fontFamily: T.fontMono, fontSize: 11, fontWeight: 600, color: T.ink, marginBottom: 14, letterSpacing:'0.04em' } }, `● Grounded in ${trendCtx.topPosts.length} real posts from your scan`),
       h('div', { style: { display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom: 22, gap: 12 } },
         h('div', null,
           h(Eyebrow, { T, text: `${result.format==='reel'?'REEL PLAN':'CAROUSEL PLAN'} · ${platform.toUpperCase()}`, color: result.format==='reel' ? '#F43F5E' : T.accentDeep }),
@@ -1343,6 +1382,20 @@ Generate 7-9 slides.`;
           h('div', { style: { display:'flex', flexWrap:'wrap', gap: 5 } }, (result.data.caption?.hashtags||[]).map((tag,i) => h('span', { key: i, style: { background: T.surface, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding:'3px 10px', fontFamily: T.fontMono, fontSize: 11, color: T.body } }, tag)))
         ),
         h('button', { onClick: ()=>copy(`${result.data.caption?.hook}\n\n${result.data.caption?.body}\n\n${result.data.caption?.cta}\n\n${(result.data.caption?.hashtags||[]).join(' ')}`), style: btnSec(T) }, 'Copy caption')
+      ),
+      trendCtx && trendCtx.bestTimeToPostReal && trendCtx.bestTimeToPost && h('div', { style: { background: T.surfaceHi, border:`1px solid ${T.hairlineSoft}`, borderRadius: T.rInput, padding:'14px 16px', marginTop: 8 } },
+        h('div', { style: { ...eb(T), marginBottom: 6 } }, '⏰ Best time to post — from real post times'),
+        h('div', { style: { fontFamily: T.fontBody, fontSize: 13.5, color: T.ink, lineHeight: 1.5 } }, trendCtx.bestTimeToPost),
+        trendCtx.postingTimeRationale && h('div', { style: { fontFamily: T.fontBody, fontSize: 12.5, color: T.body, lineHeight: 1.5, marginTop: 4 } }, trendCtx.postingTimeRationale)
+      ),
+      trendCtx && (trendCtx.topPosts||[]).length > 0 && h('div', { style: { marginTop: 8 } },
+        h('div', { style: { ...eb(T), marginBottom: 10 } }, 'Real reference posts this plan is modeled on'),
+        h('div', { style: { display:'flex', gap: 8, flexWrap:'wrap' } },
+          trendCtx.topPosts.slice(0,8).map((p,i) => h('a', { key: i, href: p.url||'#', target:'_blank', rel:'noopener', style: { background: T.surface, border:`1px solid ${T.hairline}`, borderRadius: T.rInput, padding:'10px 13px', textDecoration:'none', color: T.ink, display:'flex', flexDirection:'column', gap: 4, maxWidth: 240, boxShadow: T.sh1 } },
+            h('div', { style: { fontFamily: T.fontBody, fontSize: 12.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color: T.ink, fontWeight: 500 } }, p.text || 'Post'),
+            h('div', { style: { fontFamily: T.fontMono, fontSize: 11, color: T.mute, display:'flex', gap: 10 } }, h('span', null, platLabel(p.platform)), h('span', null, `▶ ${fmt(p.views)}`))
+          ))
+        )
       ),
       result.data.postingTip && h('div', { style: { background:`linear-gradient(105deg, ${T.g1}10, ${T.g3}10)`, border:`1px solid ${T.g2}30`, borderRadius: T.rInput, padding:'14px 16px', marginTop: 8 } },
         h('div', { style: { ...eb(T), marginBottom: 6 } }, '⚡ Posting tip'),
