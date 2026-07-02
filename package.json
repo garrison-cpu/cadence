@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "resolve-panel": "node scripts/resolve-panel.js",
+    "suggest-panel": "node scripts/suggest-panel.js",
     "panel-scan": "node scripts/run-panel-scan.js"
   },
   "engines": {

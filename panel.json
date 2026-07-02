@@ -1,4 +1,355 @@
 {
   "_doc": "Trendsetter panel. Add accounts as {handle, niche}. Run scripts/resolve-panel.js to fill uid/secUid/followers. Selection rubric: 50K-500K followers (mid-tier = leading edge), posts frequently, short-video-native, trend-forward, niche-pure. Niches: beauty, fitness, food, fashion.",
-  "accounts": []
+  "accounts": [
+    {
+      "handle": "jessicamarvisi",
+      "niche": "beauty",
+      "uid": "7049198402748679215",
+      "secUid": "MS4wLjABAAAAfz5TyhoLVxkYKhXSjhMtbc5xUTD-mUXO-X4-ZDktWSCUo_1iCl0WhhQyGADB555v",
+      "followers": 270596
+    },
+    {
+      "handle": "ameliavandament",
+      "niche": "beauty",
+      "uid": "6805440564323779589",
+      "secUid": "MS4wLjABAAAAKeetlZrYTH5LTQtCs5YjONtfQXekD2A9ojFJDnr3fKYC442ZWQ9_7HMmbwJ4IjBn",
+      "followers": 115234
+    },
+    {
+      "handle": "ninavee",
+      "niche": "beauty",
+      "uid": "6913284950440608774",
+      "secUid": "MS4wLjABAAAAkgG28Jp4x7a6PQ1xW27Q_pZtNvgW99FTOLLi6GwDr7rvpuraElmJgpxZjMZN_MTZ",
+      "followers": 106668
+    },
+    {
+      "handle": "delcidlisbeth",
+      "niche": "beauty",
+      "uid": "6712246539458790405",
+      "secUid": "MS4wLjABAAAAsfTmgdzTevcIedA9IDXWtwlWYztt-j7cJ8V_bBt7rXW54GoG3ogfhNh5K6T1mDeB",
+      "followers": 93166
+    },
+    {
+      "handle": "anastasiagenia",
+      "niche": "beauty",
+      "uid": "7594900788967932960",
+      "secUid": "MS4wLjABAAAA-5I1JZfsO2MOoGPlai0mCywo8-A1yj_oHpAmUZxoIex622SYJHijnzAIlcWsnJxC",
+      "followers": 59312
+    },
+    {
+      "handle": "alishasapproach",
+      "niche": "skincare",
+      "uid": "6804505771511923717",
+      "secUid": "MS4wLjABAAAApNV0D_JDuxaD1Kx3uy5ag64eNaI_1B1VKFrl6UAxGgTI8_UBrRwu2NRSmdJx7Poo",
+      "followers": 472205
+    },
+    {
+      "handle": "sofialiaa",
+      "niche": "skincare",
+      "uid": "7390348630705620011",
+      "secUid": "MS4wLjABAAAA51kCrAvxI1SWPOEvq_19ERiNbzjFLx1-vL9Vzls5Ag2ezoGq9kDhLyufOOpd0oye",
+      "followers": 375819
+    },
+    {
+      "handle": "crystalvalenciaaa",
+      "niche": "skincare",
+      "uid": "6651372946403131398",
+      "secUid": "MS4wLjABAAAA6AyvshzhdsQA8C8gS_wdYTIzBR0i7sQNWCtW_iP4ridBBHVMScX83Y_cqSx2UMwh",
+      "followers": 224169
+    },
+    {
+      "handle": "brendaa.chan",
+      "niche": "skincare",
+      "uid": "6773062467159770117",
+      "secUid": "MS4wLjABAAAADsm_6wpSvMKfNSCKPsBRBzzy7IrEUKPLZ-fAVqr5RAKgyV6pO_unDRI7meBwOfzs",
+      "followers": 209929
+    },
+    {
+      "handle": "mathieu_sims",
+      "niche": "skincare",
+      "uid": "6819432487993246726",
+      "secUid": "MS4wLjABAAAAHynsHpW9_kPzB_woEJ1wA82CORNKe5KxA8hqNVzQ8-xGLksWR-_aWj3vMqIkq_HG",
+      "followers": 176433
+    },
+    {
+      "handle": "bellaanya",
+      "niche": "fitness",
+      "uid": "6740736283801519109",
+      "secUid": "MS4wLjABAAAAXe14zuTK8YJBSOCVSX6fN-FRBViE2K7Pr62q5FyODqLQ0epcKzfs5jqtrriQQG3U",
+      "followers": 315875
+    },
+    {
+      "handle": "joelsultimategym",
+      "niche": "fitness",
+      "uid": "6982476468102480902",
+      "secUid": "MS4wLjABAAAApJf5bAy29EKO5C_tnyryZrL5XF43NNnlhDGKo6EXFP30l-i5mRll8plvJwzuie15",
+      "followers": 136037
+    },
+    {
+      "handle": "dmitrij.fit",
+      "niche": "fitness",
+      "uid": "7076140625448535046",
+      "secUid": "MS4wLjABAAAAOPxA62mLbswIGZc0NdqERMrSV3XK9SSO_Bqmx_BrvrBRlEJrbUyAH19ZsgiJ8s8j",
+      "followers": 112199
+    },
+    {
+      "handle": "rosefitnesss",
+      "niche": "fitness",
+      "uid": "7052084175507211270",
+      "secUid": "MS4wLjABAAAAAYgmaMqQUJ9mG2JAFt4CNplA_S71NoF0GR8NjjIpl4yYxSkodNiy50ZvobvwR1Ur",
+      "followers": 103599
+    },
+    {
+      "handle": "marielaxfit",
+      "niche": "home workouts",
+      "uid": "7471811030869214238",
+      "secUid": "MS4wLjABAAAAFsgQpLabSaDo8tFgYjElSzY7MgXpDV9E9vhMm3nMydtiaSt8kSlcWhGmoRyZ8KcV",
+      "followers": 413426
+    },
+    {
+      "handle": "gainsbygaines",
+      "niche": "home workouts",
+      "uid": "6639881602431467525",
+      "secUid": "MS4wLjABAAAA2u30-yOZk-P32qI-SlQy-7BI7EOE5yCfFYe4pQkJNvsQYScDMYjPlQUdrbLOLh-z",
+      "followers": 342211
+    },
+    {
+      "handle": "norakruu",
+      "niche": "home workouts",
+      "uid": "7384152761486246958",
+      "secUid": "MS4wLjABAAAAAbc8dtC-bWSsWglCw9Oy4xvUOUCQL99k-BEWBi9JrOWYGkUmRO7VAOZbnZklrSdm",
+      "followers": 168772
+    },
+    {
+      "handle": "move.with.margie",
+      "niche": "home workouts",
+      "uid": "6811699539129582598",
+      "secUid": "MS4wLjABAAAATbbW-h1hslsMh50V5QL6FRJixtmg8XcyguCc1IKrTsFOzPylXxkpJEYkoE7qJ-Ud",
+      "followers": 168217
+    },
+    {
+      "handle": "chloe.w.hite",
+      "niche": "home workouts",
+      "uid": "6750995019869946886",
+      "secUid": "MS4wLjABAAAAipEZwXgoDU37rv2E4W3y752jIM2nBzzrdcAoQj6CnxGRe_FIuT0dGSJ_QHHPnUA7",
+      "followers": 124947
+    },
+    {
+      "handle": "bbadonis_",
+      "niche": "food",
+      "uid": "6882499810520712194",
+      "secUid": "MS4wLjABAAAAf4f8Aj7xJGJrP-L9Mk6d3qbrutS6CbakIsmTAcCsUHE3ZldXrPd5tKsL1th7TExl",
+      "followers": 224583
+    },
+    {
+      "handle": "gone.in.3minz",
+      "niche": "food",
+      "uid": "7541063288717607969",
+      "secUid": "MS4wLjABAAAAZyzEbCxGGIU2YMhY1AhkyGTNdg_nI5GxTFCmRnNLkW1coEOO-jp_3gXMjMIuGIHV",
+      "followers": 466404
+    },
+    {
+      "handle": "thericebowleats",
+      "niche": "food",
+      "uid": "7435374639902295082",
+      "secUid": "MS4wLjABAAAAmUtVmP8_pY5Y6_GLp78o1jJAytabF4uLVQnGX6zsdPbw2fa5vmMMPJs883dC9paU",
+      "followers": 250360
+    },
+    {
+      "handle": "hopecrosby_eatss",
+      "niche": "food",
+      "uid": "6768552419117122565",
+      "secUid": "MS4wLjABAAAAIcM9xvPGv6xQgdhmlFJ2y9_ml5OYDUK1Q-5MPsOxNh36NCBrSiI_IUxgV7GJO_P7",
+      "followers": 163148
+    },
+    {
+      "handle": "bbynedaeatz",
+      "niche": "food",
+      "uid": "7523354699963368454",
+      "secUid": "MS4wLjABAAAAur_lu1ZvaUNXZ76qt9nk_hfE8p1fL7iZ50l7xnyE-7bYnxq0rAGqZbqNOQQ4SGWu",
+      "followers": 114908
+    },
+    {
+      "handle": "easyrecipe.cooking",
+      "niche": "cooking",
+      "uid": "7266391611901330478",
+      "secUid": "MS4wLjABAAAAPEJbdN3WSmHPbV2Zb29j4vGNE5YAH0ljJHo62cxOSPKbXrXmbg0gqKqyoBAo4eCM",
+      "followers": 415307
+    },
+    {
+      "handle": "myriadrecipes",
+      "niche": "cooking",
+      "uid": "6989227439840265222",
+      "secUid": "MS4wLjABAAAAEXdH1g62jS6iJ3S9T6WO32jEqh9EFFHS_i4s7SCSvHucnoW3dePeyv4ejGlqTnW3",
+      "followers": 413755
+    },
+    {
+      "handle": "giselldestini",
+      "niche": "cooking",
+      "uid": "6861092565006877701",
+      "secUid": "MS4wLjABAAAAz_EOqFFhJBw0upXnOi0oAC-xGIXx-Rqe1gG5Q1atpy1xCc1G1OKL-bMEHGeF43-x",
+      "followers": 386652
+    },
+    {
+      "handle": "recipeincaption",
+      "niche": "cooking",
+      "uid": "7390878086932284422",
+      "secUid": "MS4wLjABAAAANOKRjwNA5yaXkbMT1G8SMWp1omG_ywUhu4QkSVI0Wqb4oIMspjaDJ0GePDFvfOUk",
+      "followers": 383165
+    },
+    {
+      "handle": "kyfitjourney",
+      "niche": "cooking",
+      "uid": "7326165710991377440",
+      "secUid": "MS4wLjABAAAAN2zMrL85uQB-PkLW-8P72wnlyDaZeiI7Pb9FkWaqNPe00HecE3s7ggShwMbRbw26",
+      "followers": 362386
+    },
+    {
+      "handle": ".wqllsz",
+      "niche": "fashion",
+      "uid": "7171774091128243206",
+      "secUid": "MS4wLjABAAAA3urNCmanEKEpoTKmL0tIxIlHV-NNquXm6CtelyTOyBiCj1f-7Q4xWcXHUfAaO7Uh",
+      "followers": 445035
+    },
+    {
+      "handle": "iamemmanuela",
+      "niche": "fashion",
+      "uid": "6864930294975202310",
+      "secUid": "MS4wLjABAAAAosECZVT3uLGeBdIzi_qiotHoaa4VS9uUCbjhvrADUGJk1T6EwUgR1aQaeOQbMclN",
+      "followers": 418551
+    },
+    {
+      "handle": "_kikihaewon",
+      "niche": "fashion",
+      "uid": "6636199062100639749",
+      "secUid": "MS4wLjABAAAAjlRYCNDJ1EfEeNGUPk0QCUlCLfV86mbwFkdcTJpTmDgstqqXyR5p8488NBKHhKWJ",
+      "followers": 150916
+    },
+    {
+      "handle": "ea.lauesen",
+      "niche": "fashion",
+      "uid": "202540357119852544",
+      "secUid": "MS4wLjABAAAADuGze_phkyEZLVsgO3AL3Lq2dv6aBdZQUvaUICPPMnT6lJSBkkNHF_CNPGjAHIis",
+      "followers": 148003
+    },
+    {
+      "handle": "carlyacton_",
+      "niche": "fashion",
+      "uid": "6779712003792503813",
+      "secUid": "MS4wLjABAAAAnPXLpPk5fZPqEEFTgIEaQSXQ6IEeZOi9HATVp2VGON3TM1KRLcxspRHLTg0ebJQ_",
+      "followers": 76483
+    },
+    {
+      "handle": "maddisonsteiner",
+      "niche": "thrifting",
+      "uid": "6751220674889745414",
+      "secUid": "MS4wLjABAAAANBSClybJOcMttJdiVbKP0Y_wwQAPv46JziZzgGxyNER-NJjy2t-lquh5AfgDhq7Q",
+      "followers": 447903
+    },
+    {
+      "handle": "beckysbazaar",
+      "niche": "thrifting",
+      "uid": "6754441721620939781",
+      "secUid": "MS4wLjABAAAA4soigQXbnP0QYIV4ElI0BvIvAM6l_rhb0VBddJr1JvwQK0QF5xlmT7s2IV2QNikr",
+      "followers": 491843
+    },
+    {
+      "handle": "lifewithliztoday",
+      "niche": "thrifting",
+      "uid": "7182296318486840325",
+      "secUid": "MS4wLjABAAAAQggu_08y-GgNQbB7ICaV-tCkVpeyCc9fgmBatZNZGTMUaNV2Am3vb0SeRwpJ2Mld",
+      "followers": 153385
+    },
+    {
+      "handle": "theteddyjamesco",
+      "niche": "thrifting",
+      "uid": "6807406505626911749",
+      "secUid": "MS4wLjABAAAA0SO8YmL7AGCKap9llYDP_1dFOb5rY-k1eonyfRiWwoQWbF9S39zoSbKfXDL-NdV8",
+      "followers": 136667
+    },
+    {
+      "handle": "rebahartmanofficial",
+      "niche": "thrifting",
+      "uid": "6774955807769822213",
+      "secUid": "MS4wLjABAAAAadnuaHfCfGzLeTNSD6FZGMq0SpEr-Uaw_u2k_qqtjfIXvq7vFTqzw_3Edg3SACDD",
+      "followers": 69734
+    },
+    {
+      "handle": "null.monolith",
+      "niche": "finance",
+      "uid": "7447324269448987650",
+      "secUid": "MS4wLjABAAAA0Bv7tWQsIfpiXT79R2sx7E6t05nUMzO07Lntx8x-IeBZos5D5vbzuHK15rT_p32H",
+      "followers": 192342
+    },
+    {
+      "handle": "thequidsquid",
+      "niche": "finance",
+      "uid": "7080373090870772742",
+      "secUid": "MS4wLjABAAAA6OZn16Z7urfe40-8mxLL8Y-Crbfpj33SgInO2YR_Dh-lrHt5Axko6Wj0g-nQ51RJ",
+      "followers": 175216
+    },
+    {
+      "handle": "mrmtrades",
+      "niche": "finance",
+      "uid": "6915738339112125441",
+      "secUid": "MS4wLjABAAAAl9OOAXWCwKpwrOPekIEbXQGPYrCZvDo7yFxyXQX_o6EoCrFJLGp-6v5YvVPayMPt",
+      "followers": 60267
+    },
+    {
+      "handle": "ciara__anne",
+      "niche": "finance",
+      "uid": "7590060148581630999",
+      "secUid": "MS4wLjABAAAA7nj-jkQ7j2hztZlBTsREUN0bq8lB03jGcpmU4rqrg8H5eG6iNtzy3Gsksb8dyxiI",
+      "followers": 50556
+    },
+    {
+      "handle": "retrotechlab",
+      "niche": "tech gadgets",
+      "uid": "7451632731681489962",
+      "secUid": "MS4wLjABAAAA8AbICmUJgpDOZpWPQ-DBraNfHpxJnx_gyGldTPoBH_sqQeqXoWolEaXwgPMlBsax",
+      "followers": 256161
+    },
+    {
+      "handle": "elnazhamai",
+      "niche": "tech gadgets",
+      "uid": "6920464038364382213",
+      "secUid": "MS4wLjABAAAALYI1vodxQqwASmo3TdMBm4EX1HTQ8CPBzv1NrD9QepMU_-J5HbcncNJkLykrzZb8",
+      "followers": 484055
+    },
+    {
+      "handle": "thegadgetbadgerr",
+      "niche": "tech gadgets",
+      "uid": "6941703828695204870",
+      "secUid": "MS4wLjABAAAAHbq0sf7UIelXPPcHOtF8VMi61J18gj-M-jFbPoL3RN9lwcpv-3Z3vLm4_31_xJmW",
+      "followers": 456423
+    },
+    {
+      "handle": "vinceddo",
+      "niche": "tech gadgets",
+      "uid": "6759698109499180038",
+      "secUid": "MS4wLjABAAAAGCvCJwa_IGh9xIayqOoi4Nqtmh5JyQ0xo2HbNuSuKyTlhxsrcVWo9zvCpHZRB3U3",
+      "followers": 399257
+    },
+    {
+      "handle": "mr.jodigo",
+      "niche": "tech gadgets",
+      "uid": "7246261520937550853",
+      "secUid": "MS4wLjABAAAAhkR4gMDKr_ZtiRSEhrltq9mkcb_lc-EVeb452n3MtiIaFDD3SGALljbfuQpLQm64",
+      "followers": 252539
+    },
+    {
+      "handle": "amandabhome",
+      "niche": "home decor",
+      "uid": "7371211986875761706",
+      "secUid": "MS4wLjABAAAAuEnPrk7AhCKkGYOVWX9YGgdRin_UxjTVCdcatKJWnAaSqjqaamwj71E67aC1vUWt",
+      "followers": 262558
+    },
+    {
+      "handle": "home_decor202",
+      "niche": "home decor",
+      "uid": "7169341176373478405",
+      "secUid": "MS4wLjABAAAAziCYfSKwuEnanb7n8UVJY_O9txNQ6RAQiSPsdhQosmyNoSR2_Ik73e29DI0KRXva",
+      "followers": 269930
+    }
+  ]
 }
