@@ -1,32 +1,24 @@
 /* ============================================================================
-   run-panel-scan.js — local trigger for the panel scan
+   run-panel-scan.js — run the panel scan as a one-shot command
    ----------------------------------------------------------------------------
-   POSTs to the running server's /api/cron/panel-scan with the x-cron-key
-   header, prints the JSON response, and exits non-zero on any failure. This is
-   the entry point for a Replit Scheduled Deployment (which runs a command, not
-   an HTTP cron) — it just hits the in-process endpoint on localhost.
+   Calls runPanelScan() in-process: no server, no port, no HTTP. This is the
+   entry point for any scheduler that runs a command rather than hitting a URL
+   (Replit Scheduled Deployment, `npm run panel-scan` by hand). Needs the same
+   env the server does — RAPIDAPI_KEY for TokAPI, REPLIT_DB_URL for the store.
+
+   The HTTP path (POST /api/cron/panel-scan, guarded by CRON_KEY) still exists
+   for schedulers that can only make a request; see .github/workflows/panel-scan.yml.
    ========================================================================== */
 
-const PORT     = process.env.PORT || 3000;
-const CRON_KEY = process.env.CRON_KEY || '';
-const URL      = `http://localhost:${PORT}/api/cron/panel-scan`;
+const { runPanelScan } = require('../server.js');
 
-async function main() {
-  const r = await fetch(URL, {
-    method: 'POST',
-    headers: { 'x-cron-key': CRON_KEY, 'content-type': 'application/json' },
-  });
-  const text = await r.text();
-  let parsed;
-  try { parsed = JSON.parse(text); } catch { parsed = text; }
-
-  console.log(typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2));
-
-  if (!r.ok) {
-    console.error(`✗ panel-scan failed: HTTP ${r.status}`);
+runPanelScan()
+  .then((summary) => {
+    console.log(JSON.stringify(summary, null, 2));
+    console.log('✓ panel-scan ok');
+    process.exit(0);
+  })
+  .catch((e) => {
+    console.error('✗ panel-scan error:', e.message);
     process.exit(1);
-  }
-  console.log('✓ panel-scan ok');
-}
-
-main().catch((e) => { console.error('✗ panel-scan error:', e.message); process.exit(1); });
+  });

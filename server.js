@@ -272,12 +272,17 @@ function parseVideos(raw) {
   else if (raw?.data?.video_list) items = raw.data.video_list;
   return items.slice(0, 15).map(v => {
     const s = v.statistics || v.stats || {};
+    // origin_cover first (unwatermarked still), then cover. Both are signed URLs
+    // that expire within hours — see the scan's thumbnail capture.
+    const coverList = v.video?.origin_cover?.url_list || v.video?.cover?.url_list || [];
     return {
       desc: (v.desc || '').substring(0, 90),
       views: s.play_count || s.views || 0,
       likes: s.digg_count || s.likes || 0,
       createTime: v.create_time || v.createTime || 0,
       url: v.aweme_id ? `https://www.tiktok.com/@${v.author?.unique_id || 'tiktok'}/video/${v.aweme_id}` : null,
+      awemeId: v.aweme_id || null,
+      cover: (Array.isArray(coverList) && coverList[0]) || null,
     };
   }).filter(v => v.views > 0 || v.likes > 0);
 }
@@ -516,9 +521,7 @@ app.get('/api/scan/clear', async (_req, res) => {
 // Background data-capture seed: scans a curated set of TikTok accounts
 // (panel.json), writes a per-account views/engagement time-series, and flags
 // self-relative breakouts (a post that massively outperforms the account's own
-// recent median). Triggered on a schedule via POST /api/cron/panel-scan —
-// either by a Replit Scheduled Deployment (scripts/run-panel-scan.js) or a
-// GitHub Actions cron (.github/workflows/panel-scan.yml).
+// recent median).
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function median(arr) {
   const a = (arr || []).filter((n) => typeof n === 'number' && !Number.isNaN(n)).sort((x, y) => x - y);
@@ -527,20 +530,96 @@ function median(arr) {
   return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
 }
 
-app.post('/api/cron/panel-scan', async (req, res) => {
-  // Guard: only refuse when a CRON_KEY is configured AND the header doesn't match.
-  const CRON_KEY = process.env.CRON_KEY || '';
-  if (CRON_KEY && req.get('x-cron-key') !== CRON_KEY) {
-    return res.status(401).json({ error: { message: 'Unauthorized.' } });
-  }
+// Thumbnail capture.
+//
+// TikTok image URLs are signed and expire within hours, so the scan downloads
+// the bytes while the URL is still live rather than persisting a link that
+// would 403 by the time anyone opens Discover. Stored as base64 + content-type
+// under thumb:tiktok:<awemeId>; served back by /api/thumb/tiktok/:awemeId.
+//
+// Source order matters. The aweme's own video.origin_cover/cover is a 360x360
+// HEIC (measured across the panel: 18/19 accounts), which Chrome, Firefox and
+// Edge cannot render — and the URL signature covers the format segment, so
+// rewriting .heic to .jpeg just 403s. The official oEmbed endpoint hands back a
+// 720x1280 JPEG for the same post, which is both renderable and already the 9:16
+// the cards want, so it goes first and the raw cover is only a fallback.
+//
+// Every candidate is sniffed by magic bytes and dropped unless it is a format
+// browsers actually decode; a card with no thumbnail falls back to a text-only
+// layout, which is a far better outcome than a broken <img>.
+const THUMB_MAX_BYTES = 2 * 1024 * 1024; // guard the store against an outlier
 
+function sniffImage(buf) {
+  if (buf.slice(0, 3).toString('hex') === 'ffd8ff') return { fmt: 'JPEG', contentType: 'image/jpeg' };
+  if (buf.slice(0, 8).toString('hex') === '89504e470d0a1a0a') return { fmt: 'PNG', contentType: 'image/png' };
+  if (buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP') {
+    return { fmt: 'WEBP', contentType: 'image/webp' };
+  }
+  if (buf.slice(4, 8).toString('ascii') === 'ftyp') return { fmt: 'HEIC', contentType: null }; // unrenderable
+  return { fmt: 'UNKNOWN', contentType: null };
+}
+
+// Official oEmbed. No key, no signature games — just the post URL.
+async function oembedThumbUrl(postUrl) {
+  if (!postUrl) return null;
+  const r = await fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(postUrl), {
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) throw new Error(`oembed HTTP ${r.status}`);
+  const j = await r.json();
+  return j.thumbnail_url || null;
+}
+
+async function fetchRenderableImage(url) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (!buf.length) throw new Error('0 bytes');
+  if (buf.length > THUMB_MAX_BYTES) throw new Error(`too large (${buf.length}B)`);
+  const { fmt, contentType } = sniffImage(buf);
+  if (!contentType) throw new Error(`${fmt} is not browser-renderable`);
+  return { buf, contentType };
+}
+
+// Returns true when a thumbnail was stored. Throws — callers must not let a
+// thumbnail failure fail the scan.
+async function captureThumb(awemeId, postUrl, coverUrl) {
+  if (!awemeId) return false;
+
+  const candidates = [];
+  try {
+    const t = await oembedThumbUrl(postUrl);
+    if (t) candidates.push(['oembed', t]);
+  } catch (e) {
+    console.warn(`[panel] oembed lookup failed for ${awemeId}: ${e.message}`);
+  }
+  if (coverUrl) candidates.push(['cover', coverUrl]);
+  if (!candidates.length) return false;
+
+  const errs = [];
+  for (const [label, url] of candidates) {
+    try {
+      const { buf, contentType } = await fetchRenderableImage(url);
+      await store.setJSON(`thumb:tiktok:${awemeId}`, { contentType, b64: buf.toString('base64'), t: Date.now() });
+      return true;
+    } catch (e) {
+      errs.push(`${label}: ${e.message}`);
+    }
+  }
+  throw new Error(errs.join('; '));
+}
+
+// The scan itself, callable without an HTTP round-trip so a scheduler that runs
+// a command (rather than hitting a URL) can invoke it directly. Resolves to the
+// run summary; throws only when panel.json can't be loaded.
+async function runPanelScan() {
   const t0 = Date.now();
   let panel;
   try {
     panel = require('./panel.json');
   } catch (e) {
     console.error('[panel] could not load panel.json:', e.message);
-    return res.status(500).json({ error: { message: 'panel.json missing or invalid.' } });
+    throw new Error('panel.json missing or invalid.');
   }
 
   // Only resolved TikTok accounts. Platform defaults to tiktok when absent.
@@ -549,7 +628,7 @@ app.post('/api/cron/panel-scan', async (req, res) => {
   );
 
   const breakouts = [];
-  let scanned = 0, skipped = 0;
+  let scanned = 0, skipped = 0, thumbs = 0;
 
   for (const acct of accounts) {
     const handle = (acct.handle || '').replace(/^@/, '').trim();
@@ -605,17 +684,30 @@ app.post('/api/cron/panel-scan', async (req, res) => {
 
       // Self-relative breakout: ≥6× the account's own median AND a real audience.
       if (mult >= 6 && standout.views >= 250000) {
+        // Grab the cover bytes while the signed URL is still valid. Isolated:
+        // a thumbnail failure costs the card its image, never the scan.
+        let thumb = null;
+        try {
+          if (await captureThumb(standout.awemeId, standout.url, standout.cover)) {
+            thumb = `/api/thumb/tiktok/${standout.awemeId}`;
+            thumbs++;
+          }
+        } catch (e) {
+          console.error(`[panel] @${handle} thumbnail failed (non-fatal):`, e.message);
+        }
         breakouts.push({
           handle,
           niche: acct.niche,
           mult: Number(mult.toFixed(1)),
           velocity: Math.round(standout.velocity),
+          thumb,
           post: {
             url: standout.url,
             desc: standout.desc,
             views: standout.views,
             likes: standout.likes,
             createTime: standout.createTime,
+            awemeId: standout.awemeId || null,
           },
         });
       }
@@ -661,8 +753,24 @@ app.post('/api/cron/panel-scan', async (req, res) => {
   }
 
   const ms = Date.now() - t0;
-  console.log(`[panel] scan done: scanned=${scanned} skipped=${skipped} breakouts=${breakouts.length} sounds=${soundsCount} in ${ms}ms`);
-  res.json({ scanned, skipped, breakouts: breakouts.length, sounds: soundsCount, ms });
+  console.log(`[panel] scan done: scanned=${scanned} skipped=${skipped} breakouts=${breakouts.length} thumbs=${thumbs} sounds=${soundsCount} in ${ms}ms`);
+  return { scanned, skipped, breakouts: breakouts.length, thumbs, sounds: soundsCount, ms };
+}
+
+// Triggered on a schedule via POST /api/cron/panel-scan — see the GitHub Actions
+// cron in .github/workflows/panel-scan.yml. `npm run panel-scan` calls
+// runPanelScan() directly and needs no server.
+app.post('/api/cron/panel-scan', async (req, res) => {
+  // Guard: only refuse when a CRON_KEY is configured AND the header doesn't match.
+  const CRON_KEY = process.env.CRON_KEY || '';
+  if (CRON_KEY && req.get('x-cron-key') !== CRON_KEY) {
+    return res.status(401).json({ error: { message: 'Unauthorized.' } });
+  }
+  try {
+    res.json(await runPanelScan());
+  } catch (e) {
+    res.status(500).json({ error: { message: e.message } });
+  }
 });
 
 // ── Discover reads ───────────────────────────────────────────────────────────
@@ -671,9 +779,39 @@ app.post('/api/cron/panel-scan', async (req, res) => {
 // empty shape when the key is absent (panel hasn't run yet).
 app.get('/api/discover/breakouts', async (_req, res) => {
   try {
-    res.json((await store.getJSON('breakouts:tiktok')) || { items: [] });
+    const data = (await store.getJSON('breakouts:tiktok')) || { items: [] };
+    // Normalize both shapes: breakouts stored before thumbnail capture existed
+    // have no awemeId/thumb, so surface them explicitly as null rather than
+    // letting the keys go missing.
+    res.json({
+      ...data,
+      items: (data.items || []).map((it) => ({
+        ...it,
+        awemeId: (it.post && it.post.awemeId) || null,
+        thumb: it.thumb || null,
+      })),
+    });
   } catch (e) {
     res.json({ items: [] });
+  }
+});
+
+// Serves a thumbnail captured at scan time. The bytes are immutable once
+// stored, so let the browser hold them for a day.
+app.get('/api/thumb/tiktok/:awemeId', async (req, res) => {
+  const id = req.params.awemeId;
+  if (!/^\d{1,32}$/.test(id)) {
+    return res.status(400).json({ error: { message: 'Bad aweme id.' } });
+  }
+  try {
+    const rec = await store.getJSON(`thumb:tiktok:${id}`);
+    if (!rec || !rec.b64) return res.status(404).json({ error: { message: 'No thumbnail.' } });
+    const buf = Buffer.from(rec.b64, 'base64');
+    res.set('Content-Type', rec.contentType || 'image/jpeg');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(buf);
+  } catch (e) {
+    res.status(404).json({ error: { message: 'No thumbnail.' } });
   }
 });
 
@@ -703,21 +841,28 @@ app.get('/',    (_req, res) => res.sendFile(path.join(pub, 'index.html')));
 app.get('/app', (_req, res) => res.sendFile(path.join(pub, 'app.html')));
 app.use(express.static(pub)); // serves any other assets you add later
 
-const server = app.listen(PORT, () => console.log(`Cadence running on http://localhost:${PORT}`));
+// Only boot the HTTP server when run as the entry point. Requiring this file
+// (scripts/run-panel-scan.js does, to call runPanelScan directly) must not bind
+// a port.
+if (require.main === module) {
+  const server = app.listen(PORT, () => console.log(`Cadence running on http://localhost:${PORT}`));
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use. Another instance is likely still running. Stop it and restart.`);
-    process.exit(1);
-  } else {
-    throw err;
-  }
-});
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${PORT} is already in use. Another instance is likely still running. Stop it and restart.`);
+      process.exit(1);
+    } else {
+      throw err;
+    }
+  });
 
-function shutdown(signal) {
-  console.log(`${signal} received, shutting down.`);
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
+  const shutdown = (signal) => {
+    console.log(`${signal} received, shutting down.`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+
+module.exports = { app, runPanelScan };
