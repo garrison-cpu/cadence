@@ -1,0 +1,40 @@
+# Refreshes the Discover panel data on a schedule.
+#
+# The scan reads each panel.json account's recent posts and rewrites
+# breakouts:tiktok. Without it the Discover window pills go stale: every
+# breakout carries the post's createTime, and the page filters on age, so once
+# the newest post ages past a window that bubble renders empty.
+#
+# Setup (both required, or this job silently 401s / hits the wrong host):
+#   Repo → Settings → Secrets and variables → Actions
+#     Variable  APP_URL   e.g. https://cadence.replit.app   (no trailing slash)
+#     Secret    CRON_KEY  must equal the CRON_KEY in the app's Replit Secrets
+name: panel-scan
+
+on:
+  schedule:
+    - cron: '0 */4 * * *' # every 4 hours (~6 runs/day, ~306 TokAPI calls/day)
+  workflow_dispatch: # allows a manual run from the Actions tab
+
+concurrency:
+  group: panel-scan
+  cancel-in-progress: false # a scan takes ~2min; never run two at once
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger panel scan
+        run: |
+          if [ -z "${{ vars.APP_URL }}" ]; then
+            echo "APP_URL repo variable is not set — see this file's header." >&2
+            exit 1
+          fi
+          # --fail-with-body so a non-2xx fails the job but still prints why.
+          curl --fail-with-body -sS -X POST \
+            --max-time 300 \
+            --retry 2 --retry-delay 30 --retry-connrefused \
+            -H "x-cron-key: ${{ secrets.CRON_KEY }}" \
+            -H "content-type: application/json" \
+            "${{ vars.APP_URL }}/api/cron/panel-scan"
