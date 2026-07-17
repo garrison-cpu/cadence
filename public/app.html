@@ -685,23 +685,62 @@ function LiveSparkline({ points, height=44, color, gradient=true }) {
   );
 }
 
+// /embed/v2 lays itself out as a fixed 325px column — the container's computed
+// min-width and max-width are both 325px — so the player never stretches to fill
+// a wider iframe, it just re-centers and leaves bars down the sides. Inside that
+// column a 1px border insets the video's own 9:16 frame to 323px, with the
+// "Watch now" CTA footer stacked directly beneath it. Rendering the iframe at
+// that exact natural width and scaling the whole thing by (card width / 323)
+// therefore lands the video frame flush on all four edges of the card, and
+// pushes the footer past the bottom where the wrapper clips it away.
+const EMBED_COL_W = 325;    // the column width the embed locks itself to
+const EMBED_BORDER = 1;     // border inset before the video frame starts
+const EMBED_VIDEO_W = EMBED_COL_W - EMBED_BORDER * 2;
+// Comfortably taller than the embed's ~740px of content (video + footer +
+// caption) so it never scrolls itself — that internal scroll is the side slider.
+const EMBED_H = 1000;
+
 // Media block for a breakout card. Shows the thumbnail captured at scan time
 // with a play affordance, and swaps in place for TikTok's official embed once
 // tapped. The parent owns `playing`, which is what keeps a single embed active.
-function BreakoutMedia({ T, b, awemeId, isPlaying, onPlay }) {
+function BreakoutMedia({ b, awemeId, isPlaying, onPlay }) {
   const box = {
     position:'relative', width:'100%', aspectRatio:'9 / 16',
-    borderRadius: 14, overflow:'hidden', background: T.surfaceHi,
+    borderRadius: 14, overflow:'hidden', background:'#000',
   };
+  const wrapRef = useRef(null);
+  // How far the embed's fixed-width video frame has to be blown up to cover this
+  // card. The card is fluid, so it's measured rather than assumed.
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    const el = wrapRef.current;
+    if (!el) return;
+    const fit = () => setScale(el.getBoundingClientRect().width / EMBED_VIDEO_W);
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isPlaying]);
 
   if (isPlaying) {
-    return h('div', { style: box },
+    return h('div', { ref: wrapRef, style: box },
       h('iframe', {
         src: 'https://www.tiktok.com/embed/v2/' + awemeId,
         title: 'TikTok video by @' + b.handle,
         allow: 'encrypted-media; fullscreen; picture-in-picture',
         allowFullScreen: true,
-        style: { width:'100%', height:'100%', border:'none', display:'block' },
+        scrolling: 'no',
+        style: {
+          position:'absolute', top: 0, left: 0,
+          width: EMBED_COL_W, height: EMBED_H,
+          transformOrigin: '0 0',
+          // Border off first so the video frame's own corner is what scales up
+          // from the card's top-left.
+          transform: 'scale(' + scale + ') translate(' + -EMBED_BORDER + 'px, ' + -EMBED_BORDER + 'px)',
+          border:'none', display:'block',
+        },
       })
     );
   }
@@ -940,7 +979,7 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab, onOpenStudi
                 ].filter(Boolean);
                 return h('div', { key: 'bk_' + b.handle, style: { background: T.surface, borderRadius: 22, padding: 24, boxShadow: T.sh3, display:'flex', flexDirection:'column', gap: 14, border: 'none' } },
                   b.thumb && h(BreakoutMedia, {
-                    T, b, awemeId,
+                    b, awemeId,
                     isPlaying: !!awemeId && playing === awemeId,
                     // No awemeId means nothing to embed — send them to the post.
                     onPlay: () => {
