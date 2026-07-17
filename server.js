@@ -530,6 +530,71 @@ function median(arr) {
   return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
 }
 
+// Breakout admission, two tiers.
+//
+// Tier 1 is the original gate: a post at ≥6× its own account's recent median
+// with a real audience behind it. It is a high bar by design, and across the
+// panel it clears one or two posts on a typical day — not a feed. Tier 2 admits
+// the same shape of signal earlier and smaller, so Discover has something honest
+// to show while tier 1 stays the headline.
+//
+// Both gates are self-relative: mult is the post against its own account's
+// median, so a 40k-view post on a small account can out-rank a 2M-view post from
+// someone who always does 2M.
+const TIER1_MIN_MULT  = 6;       // "breakout"
+const TIER1_MIN_VIEWS = 250000;
+const TIER2_MIN_MULT  = 3;       // "emerging"
+const TIER2_MIN_VIEWS = 75000;
+const BREAKOUT_MAX_PER_ACCOUNT = 2;   // across both tiers combined
+const BREAKOUT_MAX_TOTAL       = 24;
+
+// Age ceiling on admission.
+//
+// Both gates score a post on mult, and views only ever accumulate — so a post
+// that did 4M views three years ago beats everything posted this week, forever.
+// The old funnel never showed this because it tested one post per account picked
+// by velocity (views ÷ hours since posting), which is implicitly a recency
+// filter; scoring every post removes that accident and lets the back catalogue
+// in. Measured on the panel: without this, 23 of 24 selected posts are >30d old,
+// median age 532 days.
+//
+// 30 days is where Discover stops looking: the window pills top out at 30d and
+// the feed filters on createTime, so an older post cannot render in the UI at
+// all — admitting it only spends a slot and a thumbnail fetch on a card nobody
+// can see.
+const BREAKOUT_MAX_AGE_DAYS = 30;
+
+// 1 or 2 for an admitted post; 0 to discard. ageSecs is the post's age; posts
+// with no usable timestamp can't prove recency and are discarded.
+function tierFor(mult, views, ageSecs) {
+  if (!(ageSecs >= 0) || ageSecs > BREAKOUT_MAX_AGE_DAYS * 86400) return 0;
+  if (mult >= TIER1_MIN_MULT && views >= TIER1_MIN_VIEWS) return 1;
+  if (mult >= TIER2_MIN_MULT && views >= TIER2_MIN_VIEWS) return 2;
+  return 0;
+}
+
+// Round-robin the niches so the feed reads as a cross-section of the panel
+// instead of five straight posts from whichever niche happened to pop today.
+// Niches lead in order of their own strongest post; within a niche, strongest
+// first. Callers pass one tier at a time — tier never interleaves.
+function interleaveByNiche(items) {
+  const groups = new Map();
+  for (const it of items) {
+    const k = it.niche || '—';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  }
+  const ordered = [...groups.values()].map((g) => g.sort((a, b) => b.mult - a.mult));
+  ordered.sort((a, b) => b[0].mult - a[0].mult);
+
+  const out = [];
+  const deepest = Math.max(0, ...ordered.map((g) => g.length));
+  for (let i = 0; i < deepest; i++) {
+    for (const g of ordered) if (i < g.length) out.push(g[i]);
+  }
+  return out;
+}
+
 // Thumbnail capture.
 //
 // TikTok image URLs are signed and expire within hours, so the scan downloads
@@ -627,8 +692,11 @@ async function runPanelScan() {
     (a) => a && a.uid && (a.platform || 'tiktok') === 'tiktok'
   );
 
-  const breakouts = [];
-  let scanned = 0, skipped = 0, thumbs = 0;
+  const candidates = [];
+  // Signed cover URL per candidate, kept out of the candidate itself so it never
+  // reaches the store — it would be a dead link by the time anyone read it.
+  const coverOf = new Map();
+  let scanned = 0, skipped = 0;
 
   for (const acct of accounts) {
     const handle = (acct.handle || '').replace(/^@/, '').trim();
@@ -682,38 +750,46 @@ async function runPanelScan() {
         await store.setJSON(`latest:tiktok:${handle}`, { t: Date.now(), posts: vids.slice(0, 10) });
       } catch {}
 
-      // Self-relative breakout: ≥6× the account's own median AND a real audience.
-      if (mult >= 6 && standout.views >= 250000) {
-        // Grab the cover bytes while the signed URL is still valid. Isolated:
-        // a thumbnail failure costs the card its image, never the scan.
-        let thumb = null;
-        try {
-          if (await captureThumb(standout.awemeId, standout.url, standout.cover)) {
-            thumb = `/api/thumb/tiktok/${standout.awemeId}`;
-            thumbs++;
-          }
-        } catch (e) {
-          console.error(`[panel] @${handle} thumbnail failed (non-fatal):`, e.message);
+      // Admission runs over EVERY post with usable data, not just the standout.
+      // A standout-only funnel throws away the account's second breakout and
+      // scores a quiet account's best-of-a-bad-week the same as a real hit.
+      const qualified = [];
+      if (baseline > 0) {
+        for (const v of vids) {
+          if (!(v.views > 0)) continue;
+          const m = v.views / baseline;
+          const tier = tierFor(m, v.views, v.createTime > 0 ? nowSec - v.createTime : -1);
+          if (!tier) continue;
+          const cand = {
+            handle,
+            niche: acct.niche || null,
+            tier,
+            mult: Number(m.toFixed(1)),
+            velocity: Math.round(v.velocity),
+            thumb: null,
+            post: {
+              url: v.url,
+              desc: v.desc,
+              views: v.views,
+              likes: v.likes,
+              createTime: v.createTime,
+              awemeId: v.awemeId || null,
+            },
+          };
+          coverOf.set(cand, v.cover);
+          qualified.push(cand);
         }
-        breakouts.push({
-          handle,
-          niche: acct.niche,
-          mult: Number(mult.toFixed(1)),
-          velocity: Math.round(standout.velocity),
-          thumb,
-          post: {
-            url: standout.url,
-            desc: standout.desc,
-            views: standout.views,
-            likes: standout.likes,
-            createTime: standout.createTime,
-            awemeId: standout.awemeId || null,
-          },
-        });
       }
+      // Any tier 1 outranks any tier 2; velocity breaks ties inside a tier.
+      qualified.sort((a, b) => a.tier - b.tier || b.velocity - a.velocity);
+      candidates.push(...qualified.slice(0, BREAKOUT_MAX_PER_ACCOUNT));
 
       scanned++;
-      console.log(`[panel] @${handle} base=${baseline} top=${standout.views} mult=${mult.toFixed(1)}`);
+      const t1 = qualified.filter((q) => q.tier === 1).length;
+      console.log(
+        `[panel] @${handle} base=${baseline} top=${standout.views} mult=${mult.toFixed(1)} ` +
+        `qualified=${qualified.length} (t1=${t1} t2=${qualified.length - t1})`
+      );
     } catch (e) {
       console.error(`[panel] @${handle} error:`, e.message);
       skipped++;
@@ -742,19 +818,63 @@ async function runPanelScan() {
     console.error('[panel] sounds layer failed (non-fatal):', e.message);
   }
 
-  // Persist breakouts, highest-multiple first.
-  try {
-    await store.setJSON('breakouts:tiktok', {
-      t: Date.now(),
-      items: breakouts.sort((a, b) => b.mult - a.mult),
-    });
-  } catch (e) {
-    console.error('[panel] could not persist breakouts:', e.message);
+  // Final order: every tier-1 item ahead of every tier-2 item, niche-interleaved
+  // within each tier, then capped.
+  const breakouts = [
+    ...interleaveByNiche(candidates.filter((b) => b.tier === 1)),
+    ...interleaveByNiche(candidates.filter((b) => b.tier === 2)),
+  ].slice(0, BREAKOUT_MAX_TOTAL);
+
+  // Thumbnails for the final list only, walked in feed order. Ordering does the
+  // prioritising: anything a limit cuts short comes off the tier-2 tail. Each
+  // capture is isolated — a failure costs that card its image, never the scan
+  // and never another card.
+  let thumbs = 0, thumbsFailed = 0;
+  for (const b of breakouts) {
+    try {
+      if (await captureThumb(b.post.awemeId, b.post.url, coverOf.get(b))) {
+        b.thumb = `/api/thumb/tiktok/${b.post.awemeId}`;
+        thumbs++;
+      }
+    } catch (e) {
+      thumbsFailed++;
+      console.error(`[panel] @${b.handle} thumbnail failed (non-fatal):`, e.message);
+    }
+  }
+  console.log(`[panel] thumbs: captured=${thumbs} failed=${thumbsFailed} of ${breakouts.length} breakouts`);
+
+  // Persist in the order above — the feed renders it as-is.
+  //
+  // Unless nothing scanned at all. A run where every account errors (TokAPI
+  // down, rate-limit wall, expired subscription) knows nothing about the world;
+  // writing its empty list would delete the last good feed and blank Discover
+  // until the next healthy scan. An empty list from a *healthy* scan is real
+  // information — nothing broke out today — and is still written.
+  if (scanned === 0) {
+    console.warn(`[panel] no account scanned (${skipped} failed) — keeping the stored breakouts`);
+  } else {
+    try {
+      await store.setJSON('breakouts:tiktok', { t: Date.now(), items: breakouts });
+    } catch (e) {
+      console.error('[panel] could not persist breakouts:', e.message);
+    }
   }
 
+  const tier1 = breakouts.filter((b) => b.tier === 1).length;
   const ms = Date.now() - t0;
-  console.log(`[panel] scan done: scanned=${scanned} skipped=${skipped} breakouts=${breakouts.length} thumbs=${thumbs} sounds=${soundsCount} in ${ms}ms`);
-  return { scanned, skipped, breakouts: breakouts.length, thumbs, sounds: soundsCount, ms };
+  console.log(
+    `[panel] scan done: scanned=${scanned} skipped=${skipped} breakouts=${breakouts.length} ` +
+    `(t1=${tier1} t2=${breakouts.length - tier1}) qualified=${candidates.length} ` +
+    `thumbs=${thumbs}/${thumbsFailed}f sounds=${soundsCount} in ${ms}ms`
+  );
+  return {
+    scanned, skipped,
+    breakouts: breakouts.length,
+    tier1, tier2: breakouts.length - tier1,
+    qualified: candidates.length,
+    thumbs, thumbsFailed,
+    sounds: soundsCount, ms,
+  };
 }
 
 // Triggered on a schedule via POST /api/cron/panel-scan — see the GitHub Actions
@@ -780,15 +900,18 @@ app.post('/api/cron/panel-scan', async (req, res) => {
 app.get('/api/discover/breakouts', async (_req, res) => {
   try {
     const data = (await store.getJSON('breakouts:tiktok')) || { items: [] };
-    // Normalize both shapes: breakouts stored before thumbnail capture existed
-    // have no awemeId/thumb, so surface them explicitly as null rather than
-    // letting the keys go missing.
+    // Normalize every stored generation into one shape. Breakouts written before
+    // thumbnail capture existed carry no awemeId/thumb; those written before
+    // tiering carry no tier/niche. Anything stored untiered cleared the old gate,
+    // which is today's tier 1 — so that is what it reads back as.
     res.json({
       ...data,
       items: (data.items || []).map((it) => ({
         ...it,
         awemeId: (it.post && it.post.awemeId) || null,
         thumb: it.thumb || null,
+        tier: it.tier === 2 ? 2 : 1,
+        niche: it.niche || null,
       })),
     });
   } catch (e) {

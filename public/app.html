@@ -644,7 +644,8 @@ const MOCK_TRENDS = [
 // whenever the panel hasn't produced data yet.
 const SHOW_LIVE_DISCOVER = true;
 
-// Heat label for a breakout's self-relative multiple (panel floor is 6×).
+// Heat label for a breakout's self-relative multiple (panel floor is the tier-2
+// admission, 3×).
 const heatForMult = (m) => m >= 20 ? 'viral' : m >= 10 ? 'hot' : 'rising';
 
 // Relative post age from a unix-seconds createTime; '' when unknown (hidden).
@@ -946,11 +947,11 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab, onOpenStudi
         )
       ),
 
-      /* TOP TRENDS — shadow cards, generous padding */
+      /* EMERGING VIDEOS — shadow cards, generous padding */
       h('section', null,
         h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom: 18 } },
           h('div', null,
-            h('div', { style: eb(T) }, (SHOW_LIVE_DISCOVER && isLive) ? 'Top trends · TikTok creator panel' : 'Top trends · AI tools for creators'),
+            h('div', { style: eb(T) }, (SHOW_LIVE_DISCOVER && isLive) ? 'Emerging videos · TikTok creator panel' : 'Emerging videos · AI tools for creators'),
             h('div', { className:'serif', style: { marginTop: 6, fontSize: 28, color: T.ink, letterSpacing:'-0.015em' } },
               (SHOW_LIVE_DISCOVER && isLive)
                 ? (feed.length === 0 ? 'Nothing matches these filters yet.' : feed.length === 1 ? 'One is climbing right now.' : feed.length + ' are climbing right now.')
@@ -977,7 +978,9 @@ function DiscoverFull({ T, t, inputVal, setInputVal, doScan, setTab, onOpenStudi
                   b.post?.likes != null ? ['Likes', fmt(b.post.likes)] : null,
                   b.mult ? ['× med', b.mult + '×'] : null,
                 ].filter(Boolean);
-                return h('div', { key: 'bk_' + b.handle, style: { background: T.surface, borderRadius: 22, padding: 24, boxShadow: T.sh3, display:'flex', flexDirection:'column', gap: 14, border: 'none' } },
+                // An account can contribute more than one post, so the handle
+                // alone no longer identifies a card.
+                return h('div', { key: 'bk_' + (awemeId || b.handle + '_' + i), style: { background: T.surface, borderRadius: 22, padding: 24, boxShadow: T.sh3, display:'flex', flexDirection:'column', gap: 14, border: 'none' } },
                   b.thumb && h(BreakoutMedia, {
                     b, awemeId,
                     isPlaying: !!awemeId && playing === awemeId,
