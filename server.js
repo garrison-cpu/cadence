@@ -21,6 +21,8 @@
    an access gate in front of the /api/* routes.
    ========================================================================== */
 
+require('dotenv').config();
+
 const express  = require('express');
 const path     = require('path');
 const engine   = require('./trend-engine');

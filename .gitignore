@@ -6,6 +6,9 @@ node_modules/
 .env.*
 *.local
 
+# ...but the key template is documentation, not a secret
+!.env.example
+
 # Replit
 .replit
 replit.nix
