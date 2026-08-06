@@ -5,10 +5,14 @@
 # breakout carries the post's createTime, and the page filters on age, so once
 # the newest post ages past a window that bubble renders empty.
 #
-# Setup (both required, or this job silently 401s / hits the wrong host):
-#   Repo → Settings → Secrets and variables → Actions
-#     Variable  APP_URL   e.g. https://cadence.replit.app   (no trailing slash)
-#     Secret    CRON_KEY  must equal the CRON_KEY in the app's Replit Secrets
+# This runs the scan ON THE RUNNER (node scripts/run-panel-scan.js) rather than
+# curling the deployed app, so it no longer depends on the app being up or on
+# APP_URL/CRON_KEY being correct. It writes straight to Postgres.
+#
+# Setup (both required):
+#   Repo → Settings → Secrets and variables → Actions → Secrets
+#     NEON_DATABASE_URL  the Neon connection string (the pooled one is fine)
+#     RAPIDAPI_KEY       the TokAPI key
 name: panel-scan
 
 on:
@@ -23,18 +27,21 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The scan itself is ~2min; the headroom is for TokAPI being slow, not for
+    # the job legitimately needing it.
+    timeout-minutes: 15
     steps:
-      - name: Trigger panel scan
-        run: |
-          if [ -z "${{ vars.APP_URL }}" ]; then
-            echo "APP_URL repo variable is not set — see this file's header." >&2
-            exit 1
-          fi
-          # --fail-with-body so a non-2xx fails the job but still prints why.
-          curl --fail-with-body -sS -X POST \
-            --max-time 300 \
-            --retry 2 --retry-delay 30 --retry-connrefused \
-            -H "x-cron-key: ${{ secrets.CRON_KEY }}" \
-            -H "content-type: application/json" \
-            "${{ vars.APP_URL }}/api/cron/panel-scan"
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run panel scan
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
+        run: node scripts/run-panel-scan.js

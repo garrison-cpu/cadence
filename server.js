@@ -27,6 +27,7 @@ const express  = require('express');
 const path     = require('path');
 const engine   = require('./trend-engine');
 const Database = require('@replit/database');
+const { Pool }  = require('pg');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -75,16 +76,92 @@ app.use(express.json({ limit: '1mb' }));
 // ── Trend-engine history store (Replit DB-backed) ───────────────────────────
 // One shared store: the engine reads/writes observation history through it so
 // momentum is computed from real accumulated data, not invented per scan.
-const db = new Database();
+// The client is built on first use, never at module load: `new Database()`
+// throws "expected dbUrl, got undefined" when REPLIT_DB_URL is absent, and
+// scripts/run-panel-scan.js requires this file on GitHub's runner, where it is.
+// Eager construction would crash that job before it ran a line of scan code.
+let _db = null;
+function replitDb() {
+  if (_db) return _db;
+  if (!process.env.REPLIT_DB_URL) {
+    throw new Error('REPLIT_DB_URL is not set — Replit DB is unavailable in this environment.');
+  }
+  _db = new Database();
+  return _db;
+}
 // Follows the NOTES FOR GARRISON adapter, but unwraps the Result envelope the
 // installed @replit/database v3 returns ({ ok, value }) so getJSON/listKeys hand
 // the engine the raw value/array it expects. Works with both v2 and v3 returns.
 const unwrap = (r) => (r && typeof r === 'object' && 'ok' in r) ? (r.ok ? r.value : null) : r;
 class ReplitStore extends engine.HistoryStore {
-  async getJSON(k)       { return unwrap(await db.get(k)) ?? null; }
-  async setJSON(k, v)    { await db.set(k, v); }
-  async listKeys(prefix) { return unwrap(await db.list(prefix)) || []; }
+  async getJSON(k)       { return unwrap(await replitDb().get(k)) ?? null; }
+  async setJSON(k, v)    { await replitDb().set(k, v); }
+  async listKeys(prefix) { return unwrap(await replitDb().list(prefix)) || []; }
+  async delete(k)        { await replitDb().delete(k); }
 }
+
+// ── Postgres (Neon) history store ────────────────────────────────────────────
+// Same four operations as ReplitStore, backed by a single `kv` table. Reads
+// NEON_DATABASE_URL, not DATABASE_URL: on Replit the latter points at Replit's
+// own built-in Postgres, so using it here would silently write to the wrong db.
+const KV_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS kv (
+    key        TEXT PRIMARY KEY,
+    value      JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+`;
+// listKeys takes a literal prefix, so escape LIKE's wildcards before appending
+// '%'. Real keys contain underscores (trending_sounds:tiktok) and an unescaped
+// '_' matches any single character, which would over-match.
+const escapeLike = (s) => s.replace(/([\\%_])/g, '\\$1');
+
+class PostgresStore extends engine.HistoryStore {
+  constructor(connectionString = process.env.NEON_DATABASE_URL) {
+    super();
+    if (!connectionString) throw new Error('NEON_DATABASE_URL is not set.');
+    this.pool = new Pool({ connectionString, ssl: { rejectUnauthorized: true } });
+    this._ready = null;
+  }
+  // Created once per process, on the first operation. The promise is cached so
+  // concurrent callers await the same CREATE TABLE rather than racing it.
+  async _ensure() {
+    if (!this._ready) {
+      this._ready = this.pool.query(KV_SCHEMA).catch((e) => { this._ready = null; throw e; });
+    }
+    return this._ready;
+  }
+  async getJSON(k) {
+    await this._ensure();
+    const { rows } = await this.pool.query('SELECT value FROM kv WHERE key = $1', [k]);
+    return rows.length ? rows[0].value : null;
+  }
+  async setJSON(k, v) {
+    await this._ensure();
+    await this.pool.query(
+      `INSERT INTO kv (key, value, updated_at) VALUES ($1, $2::jsonb, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [k, JSON.stringify(v)]
+    );
+  }
+  async listKeys(prefix) {
+    await this._ensure();
+    const { rows } = await this.pool.query(
+      `SELECT key FROM kv WHERE key LIKE $1 ESCAPE '\\' ORDER BY key`,
+      [escapeLike(String(prefix ?? '')) + '%']
+    );
+    return rows.map((r) => r.key);
+  }
+  async delete(k) {
+    await this._ensure();
+    await this.pool.query('DELETE FROM kv WHERE key = $1', [k]);
+  }
+  async close() { await this.pool.end(); }
+}
+
+// Still Replit DB — the cutover to PostgresStore happens after the migration
+// verifies. Every caller below goes through `store`, so flipping this one line
+// is the whole switch.
 const store = new ReplitStore();
 
 // ── Claude proxy ─────────────────────────────────────────────────────────────
@@ -511,7 +588,7 @@ app.post('/api/scan', async (req, res) => {
 app.get('/api/scan/clear', async (_req, res) => {
   try {
     const keys = await store.listKeys('scan:');
-    for (const k of keys) { try { await db.delete(k); } catch {} }
+    for (const k of keys) { try { await store.delete(k); } catch {} }
     console.log(`[scan] cache cleared: ${keys.length} keys`);
     res.json({ cleared: keys.length });
   } catch (e) {
@@ -990,4 +1067,4 @@ if (require.main === module) {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-module.exports = { app, runPanelScan };
+module.exports = { app, runPanelScan, ReplitStore, PostgresStore };
