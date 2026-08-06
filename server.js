@@ -188,10 +188,11 @@ class PostgresStore extends engine.HistoryStore {
   async close() { await this.pool.end(); }
 }
 
-// Still Replit DB — the cutover to PostgresStore happens after the migration
-// verifies. Every caller below goes through `store`, so flipping this one line
-// is the whole switch.
-const store = new ReplitStore();
+// Postgres (Neon) is now the live store. ReplitStore stays defined above so
+// scripts/migrate-to-postgres.js can still read the old data; nothing else
+// constructs it. Every caller below goes through `store`, so this one line is
+// the whole switch.
+const store = new PostgresStore();
 
 // ── Claude proxy ─────────────────────────────────────────────────────────────
 app.post('/api/claude', async (req, res) => {
