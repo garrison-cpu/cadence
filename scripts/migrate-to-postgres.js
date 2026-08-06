@@ -14,6 +14,11 @@
    Safe to re-run: every write is an upsert keyed on `key`, so a second pass
    overwrites with the current value rather than duplicating. It never deletes,
    so re-running after new scans have landed simply brings Postgres up to date.
+
+   Values go through PostgresStore.setJSON, which sanitizes lone UTF-16
+   surrogates and \u0000 out of strings — JSONB rejects both, Replit DB accepted
+   them. Keys that failed an earlier run with "invalid input syntax for type
+   json" therefore succeed on a re-run; no separate cleanup pass is needed.
    ========================================================================== */
 
 require('dotenv').config();

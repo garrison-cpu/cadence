@@ -116,6 +116,35 @@ const KV_SCHEMA = `
 // '_' matches any single character, which would over-match.
 const escapeLike = (s) => s.replace(/([\\%_])/g, '\\$1');
 
+// Scraped TikTok text carries lone UTF-16 surrogates (broken emoji), which
+// JSON.stringify escapes as \udXXX. JSONB rejects those with "invalid input
+// syntax for type json", and rejects \u0000 too. Replit DB accepted both, so
+// this only started mattering on Postgres.
+//
+// The surrogate rule itself lives in stripLoneSurrogates (used by the Claude
+// prompt path for the same underlying problem); this adds the NUL that JSONB
+// additionally refuses, rather than restating the surrogate regex.
+const jsonbSafeString = (s) => stripLoneSurrogates(s).replace(/\u0000/g, '');
+
+// Applied inside setJSON, not at call sites: the next panel scan writes
+// breakouts:tiktok straight from scraped text and would otherwise reintroduce
+// exactly the failure this fixes.
+function jsonbSafe(value, seen = new WeakSet()) {
+  if (typeof value === 'string') return jsonbSafeString(value);
+  if (value === null || typeof value !== 'object') return value;
+  // Mirror JSON.stringify: let Date and friends serialize themselves first.
+  if (typeof value.toJSON === 'function') return jsonbSafe(value.toJSON(), seen);
+  if (seen.has(value)) throw new TypeError('Converting circular structure to JSON');
+  seen.add(value);
+  const out = Array.isArray(value)
+    ? value.map((v) => jsonbSafe(v, seen))
+    : Object.fromEntries(
+        Object.entries(value).map(([k, v]) => [jsonbSafeString(k), jsonbSafe(v, seen)])
+      );
+  seen.delete(value);
+  return out;
+}
+
 class PostgresStore extends engine.HistoryStore {
   constructor(connectionString = process.env.NEON_DATABASE_URL) {
     super();
@@ -141,7 +170,7 @@ class PostgresStore extends engine.HistoryStore {
     await this.pool.query(
       `INSERT INTO kv (key, value, updated_at) VALUES ($1, $2::jsonb, now())
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-      [k, JSON.stringify(v)]
+      [k, JSON.stringify(jsonbSafe(v))]
     );
   }
   async listKeys(prefix) {
